@@ -1,11 +1,33 @@
 [package]
 name = "bistre"
 version = "0.1.0"
+description = "Pretty-print ndjson log lines"
+categories = ["command-line-utilities"]
+authors = ["C J Silverio <ceejceej@gmail.com>"]
 edition = "2024"
+readme = "README.md"
+license = "Parity-7.0.0"
+repository = "https://github.com/ceejbot/bistre"
+homepage = "https://github.com/ceejbot/bistre"
 
 [dependencies]
+anyhow = "1.0.98"
 clap = { version = "4.5.42", features = ["derive", "wrap_help"] }
+humansize = "2.1.3"
 jiff = { version = "0.2.15", features = ["serde"] }
 owo-colors = "4.2.2"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
+tabwriter = { version = "1.4.1", features = ["ansi_formatting"] }
+
+[lints.rust]
+unsafe_code = { level = "deny", priority = 1 }
+future_incompatible = { level = "deny", priority = 2 }
+trivial_casts = { level = "warn", priority = 3 }
+rust_2018_idioms = { level = "warn", priority = 4 }
+
+[lints.clippy]
+unwrap_used = "deny"
+
+[profile.release]
+lto = "thin"
