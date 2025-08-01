@@ -18,7 +18,7 @@ use tabwriter::TabWriter;
 use term_grid::{Filling, Grid, GridOptions};
 
 #[derive(Debug, Clone, Parser)]
-#[clap(name="bistre", version, styles = v3_styles(), max_term_width = 100)]
+#[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
 /// A tool for pretty-printing json logs or any ndjson content that has
 /// a message, a level, and a timestamp.
 ///
@@ -39,8 +39,8 @@ struct Args {
     /// Only makes sense if you're tailing a file.
     #[arg(default_value = "0")]
     offset: String,
-    /// Pretty-print the named file; defaults to printing stdin if not provided.
-    #[arg(default_value = "")]
+    /// Pretty-print the named file; defaults to stdin if not provided.
+    #[arg(default_value = "", name = "FILE")]
     tail: String,
 }
 
@@ -53,7 +53,10 @@ fn v3_styles() -> Styles {
         .placeholder(AnsiColor::Green.on_default())
 }
 
-/// A log line, somewhat flexibly formatted. There are two fields that we demand be present: a log level and a message. We allow several possible names for common log fields. The rest of the fields are mentioned only so we can print them in a controlled order. We do not demand that they be present.
+/// A log line, somewhat flexibly formatted. There are two fields that we demand
+/// be present: a log level and a message. We allow several possible names for
+/// common log fields. The rest of the fields are mentioned only so we can print
+/// them in a controlled order. We do not demand that they be present.
 #[derive(Debug, Clone, Deserialize)]
 struct Message {
     /// The time this message was logged.
@@ -225,8 +228,6 @@ struct Soot {
 static CONFIG: OnceLock<Soot> = OnceLock::new();
 
 fn cat_stdin() -> anyhow::Result<()> {
-    let show_time = CONFIG.get().is_some_and(|v| v.show_time);
-
     let mut line = String::new();
     let mut inlock = io::stdin().lock();
     let mut outlock = io::stdout().lock();
@@ -235,12 +236,12 @@ fn cat_stdin() -> anyhow::Result<()> {
     while inlock.read_line(&mut line)? != 0 {
         match serde_json::from_str::<Message>(line.as_str()) {
             Ok(message) => {
-                writeln!(outlock, "{message}");
+                writeln!(outlock, "{message}")?;
                 //message.write(&mut tabby, show_time)?;
                 //tabby.flush()?;
             }
             Err(_) => {
-                writeln!(outlock, "{line}");
+                writeln!(outlock, "{line}")?;
                 //tabby.write_all(line.as_bytes())?;
                 //tabby.flush()?;
             }

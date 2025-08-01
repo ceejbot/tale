@@ -1,4 +1,4 @@
-BINNAME := "bistre"
+BINNAME := "tale"
 RELATIVE_TAP_PATH := "../../../homebrew-tap/"
 
 _help:

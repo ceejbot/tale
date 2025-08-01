@@ -68,22 +68,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
-name = "bistre"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "humansize",
- "jiff",
- "owo-colors",
- "serde",
- "serde_json",
- "tabwriter",
- "tempfile",
- "uutils_term_grid",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,6 +384,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
 dependencies = [
  "unicode-width 0.2.1",
+]
+
+[[package]]
+name = "tale"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "humansize",
+ "jiff",
+ "owo-colors",
+ "serde",
+ "serde_json",
+ "tabwriter",
+ "tempfile",
+ "uutils_term_grid",
 ]
 
 [[package]]
