@@ -1,0 +1,13 @@
+Starting application server...
+{"timestamp": "2025-08-01T10:30:15Z", "level": "INFO", "message": "Application server started on port 8080"}
+Loading configuration from /etc/app/config.yml
+{"ts": "2025-08-01T10:30:16Z", "lvl": "DEBUG", "msg": "Configuration loaded successfully", "config_file": "/etc/app/config.yml"}
+Connecting to database...
+{"time": "2025-08-01T10:30:17Z", "level": "INFO", "message": "Database connection established", "host": "db.example.com", "database": "production"}
+ERROR: Failed to initialize cache module
+{"timestamp": "2025-08-01T10:30:18Z", "level": "ERROR", "message": "Cache initialization failed", "error": "Connection timeout", "timeout_ms": 5000}
+Setting up routes...
+{"timestamp": "2025-08-01T10:30:19Z", "level": "INFO", "message": "REST API routes configured", "route_count": 42}
+WARN: Using default SSL certificate
+{"timestamp": "2025-08-01T10:30:20Z", "level": "WARN", "message": "SSL certificate not configured, using self-signed", "cert_path": "/tmp/self-signed.crt"}
+Application ready to accept connections

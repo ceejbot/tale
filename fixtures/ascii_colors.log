@@ -1,0 +1,10 @@
+{"timestamp": "2025-08-01T14:20:00Z", "level": "INFO", "message": "Starting colorized application", "app_name": "rainbow-service"}
+{"timestamp": "2025-08-01T14:20:01Z", "level": "DEBUG", "message": "\u001b[32mGreen success message\u001b[0m from component", "component": "auth-module"}
+{"timestamp": "2025-08-01T14:20:02Z", "level": "WARN", "message": "Warning: \u001b[33mYellow alert\u001b[0m detected in system", "alert_type": "memory_usage"}
+{"timestamp": "2025-08-01T14:20:03Z", "level": "ERROR", "message": "\u001b[31;1mBold red error:\u001b[0m Database connection failed", "error_code": "DB_TIMEOUT", "retry_count": 3}
+{"timestamp": "2025-08-01T14:20:04Z", "level": "INFO", "message": "Status: \u001b[42mGREEN\u001b[0m - All systems \u001b[92moperational\u001b[0m", "health_check": "passed"}
+{"timestamp": "2025-08-01T14:20:05Z", "level": "DEBUG", "message": "Processing \u001b[36mcyan\u001b[0m request with \u001b[35mmagenta\u001b[0m parameters", "request_id": "\u001b[93mreq_colorful_123\u001b[0m", "method": "POST"}
+{"timestamp": "2025-08-01T14:20:06Z", "level": "WARN", "message": "\u001b[43;30mBlack text on yellow background\u001b[0m - Rate limit approaching", "current_rate": 95, "limit": 100}
+{"timestamp": "2025-08-01T14:20:07Z", "level": "ERROR", "message": "Stack trace with colors:\n\u001b[31mException in thread \"main\"\u001b[0m\n  at \u001b[34mcom.example.ColoredClass.method\u001b[0m(ColoredClass.java:42)\n  at \u001b[34mcom.example.Main.run\u001b[0m(Main.java:15)", "exception_type": "ColorfulException"}
+{"timestamp": "2025-08-01T14:20:08Z", "level": "INFO", "message": "Rainbow message: \u001b[31mR\u001b[33mA\u001b[32mI\u001b[36mN\u001b[34mB\u001b[35mO\u001b[91mW\u001b[0m complete", "status": "\u001b[32msuccess\u001b[0m"}
+{"timestamp": "2025-08-01T14:20:09Z", "level": "DEBUG", "message": "Normal message without colors", "component": "vanilla-module"}

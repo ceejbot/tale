@@ -1,0 +1,10 @@
+{"timestamp": "2025-08-01T10:45:00Z", "level": "INFO", "message": "Service starting up", "service": "auth-service"}
+{"user_id": 12345, "action": "login", "success": true}
+{"ts": "2025-08-01T10:45:01Z", "lvl": "DEBUG", "msg": "User authentication successful", "user_id": 12345, "method": "POST", "url": "/api/auth/login"}
+{"product_id": "ABC123", "price": 29.99, "category": "electronics"}
+{"time": "2025-08-01T10:45:02Z", "level": "WARN", "message": "Rate limit approaching", "user_id": 12345, "requests_per_minute": 85, "limit": 100}
+{"event": "page_view", "page": "/dashboard", "user_agent": "Mozilla/5.0"}
+{"timestamp": "2025-08-01T10:45:03Z", "level": "ERROR", "message": "Database query failed", "query": "SELECT * FROM users WHERE id = ?", "error_code": "ER_NO_SUCH_TABLE", "elapsed": "250ms"}
+{"inventory": [{"item": "widget", "count": 100}, {"item": "gadget", "count": 50}]}
+{"timestamp": "2025-08-01T10:45:04Z", "level": "INFO", "message": "Cache warming completed", "cache_size": "2.3MB", "items_cached": 1500}
+{"config": {"debug": true, "max_connections": 100, "timeout": 30}}

@@ -1,0 +1,5 @@
+{"timestamp": "2025-08-01T11:00:00Z", "level": "INFO", "message": "Windows service started"}
+{"ts": "2025-08-01T11:00:01Z", "lvl": "DEBUG", "msg": "Processing batch job", "batch_id": "B001"}
+{"time": "2025-08-01T11:00:02Z", "level": "WARN", "message": "Memory usage high", "memory_mb": 1024}
+{"timestamp": "2025-08-01T11:00:03Z", "level": "ERROR", "message": "File access denied", "file_path": "C:\\Windows\\System32\\config.dat"}
+{"timestamp": "2025-08-01T11:00:04Z", "level": "INFO", "message": "Backup completed successfully", "backup_size": "500MB", "location": "D:\\Backups\\daily_20250801.zip"}
