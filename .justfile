@@ -11,6 +11,9 @@ test:
 # Run the same checks we run in CI. Requires nightly.
 ci: test
 	cargo clippy
+	cargo +nightly fmt --check
+
+fmt:
 	cargo +nightly fmt
 
 # Ask for clippy's opinion.
