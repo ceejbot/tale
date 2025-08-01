@@ -5,6 +5,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use anyhow::anyhow;
 use clap::Parser;
@@ -18,7 +19,7 @@ use tabwriter::TabWriter;
 #[derive(Debug, Clone, Parser)]
 #[clap(name="bistre", version, styles = v3_styles(), max_term_width = 100)]
 /// A tool for pretty-printing json logs or any ndjson content that has
-/// timestamp and message fields.
+/// a message, a level, and a timestamp.
 ///
 /// The timestamp field may be named `time`, `ts`, or `timestamp`. The message
 /// field may be named `message` or `msg`. The tool has some opinions about
@@ -26,6 +27,9 @@ use tabwriter::TabWriter;
 /// out every field that shows up in the log line, using the color theme you
 /// have set in your terminal.
 struct Args {
+    /// Show timestamps, which are hidden by default.
+    #[arg(short, long, global = true)]
+    timestamps: bool,
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long, global = true)]
     follow: bool,
@@ -34,7 +38,7 @@ struct Args {
     /// Only makes sense if you're tailing a file.
     #[arg(default_value = "0")]
     offset: String,
-    /// Tail the named file; defaults to catting stdin if not provided.
+    /// Pretty-print the named file; defaults to printing stdin if not provided.
     #[arg(default_value = "")]
     tail: String,
 }
@@ -60,6 +64,9 @@ struct Message {
     /// The string message part of the log line.
     #[serde(alias = "msg")]
     message: String,
+    /// Log level for this line.
+    #[serde(alias = "lvl")]
+    level: String,
     /// A request id
     #[serde(alias = "requestId")]
     request_id: Option<String>,
@@ -85,18 +92,15 @@ struct Message {
 }
 
 impl Message {
-    pub fn write<T>(&self, tabby: &mut TabWriter<T>) -> anyhow::Result<()>
+    pub fn write<T>(&self, tabby: &mut TabWriter<T>, show_time: bool) -> anyhow::Result<()>
     where
         T: Write,
     {
-        write!(
-            tabby,
-            "{}\t{}",
-            self.timestamp.strftime("%F-%T").bright_blue(),
-            self.message.bold()
-        )?;
-
         let mut cells: Vec<String> = Vec::new();
+
+        if let Some(ref v) = self.request_id {
+            cells.push(format!("reqid: {}", v.bright_yellow()));
+        }
         if let Some(ref v) = self.request_id {
             cells.push(format!("reqid: {}", v.bright_yellow()));
         }
@@ -131,11 +135,36 @@ impl Message {
                 cells.push(the_rest.to_string());
             }
         }
-        let _results: Vec<Result<(), std::io::Error>> = cells
-            .iter()
+
+        // Now we print.
+        let mut iter = cells.iter();
+
+        if show_time {
+            writeln!(
+                tabby,
+                "{}\t{}\t{}",
+                self.timestamp.strftime("%F-%T").blue(),
+                self.level.bold().bright_blue(),
+                self.message.bold()
+            )?;
+        } else if cells.is_empty() {
+            writeln!(tabby, "{}\t{}", self.level.bold().bright_blue(), self.message.bold())?;
+        } else {
+            let first = iter.next().map_or(String::default(), |xs| xs.to_string());
+            writeln!(
+                tabby,
+                "{}\t{}\t{}",
+                self.level.bold().bright_blue(),
+                first.blue(),
+                self.message.bold()
+            )?;
+        }
+
+        let _results: Vec<Result<(), std::io::Error>> = iter
             .enumerate()
             .map(|(i, xs)| {
                 if i % 5 == 0 {
+                    write!(tabby, "\n")?;
                     tabby.flush()?;
                 }
                 write!(tabby, "{xs}")?;
@@ -150,9 +179,10 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use std::io::Cursor;
         let buffer = Cursor::new(Vec::with_capacity(1000));
+        let show_time = CONFIG.get().map_or(false, |v| v.show_time);
         let mut tabby = TabWriter::new(buffer);
 
-        self.write(&mut tabby).map_err(|_| std::fmt::Error)?;
+        self.write(&mut tabby, show_time).map_err(|_| std::fmt::Error)?;
 
         let buffy = tabby.into_inner().map_err(|_| std::fmt::Error)?;
         let bytes = buffy.into_inner();
@@ -161,7 +191,17 @@ impl Display for Message {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct Soot {
+    tailing: bool,
+    show_time: bool,
+}
+
+static CONFIG: OnceLock<Soot> = OnceLock::new();
+
 fn cat_stdin() -> anyhow::Result<()> {
+    let show_time = CONFIG.get().map_or(false, |v| v.show_time);
+
     let mut line = String::new();
     let mut inlock = io::stdin().lock();
     let outlock = io::stdout().lock();
@@ -170,7 +210,7 @@ fn cat_stdin() -> anyhow::Result<()> {
     while inlock.read_line(&mut line)? != 0 {
         match serde_json::from_str::<Message>(line.as_str()) {
             Ok(message) => {
-                message.write(&mut tabby)?;
+                message.write(&mut tabby, show_time)?;
                 tabby.flush()?;
             }
             Err(_) => {
@@ -180,6 +220,11 @@ fn cat_stdin() -> anyhow::Result<()> {
         }
         line.clear();
     }
+    if !CONFIG.get().map_or(false, |v| v.tailing) {
+        return Ok(());
+    }
+
+    // TODO if tailing, need to hang out and read more
 
     Ok(())
 }
@@ -217,6 +262,10 @@ where
         todo!()
     };
 
+    if !CONFIG.get().map_or(false, |v| v.tailing) {
+        return Ok(());
+    }
+
     // wait for another line ending to be read
     // print, repeat
 
@@ -225,6 +274,14 @@ where
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    let config = Soot {
+        tailing: args.follow,
+        show_time: args.timestamps,
+    };
+    CONFIG
+        .set(config)
+        .expect("Quite improbably failed to set a OnceLock on process start.");
 
     // A bit fiddly but: if we see args.offset = "0" and args.tail = empty,
     // we do stdin and stop at EOF. If we see args.offset = some string and
@@ -256,17 +313,21 @@ mod tests {
 
     #[test]
     fn logline_deser() {
-        let logline =
-            r#"{"timestamp": "2025-07-30T17:41-07:00","message": "I'm not crazy you're the ones who are crazy"}"#;
+        let logline = r#"{
+            "timestamp": "2025-07-30T17:41-07:00",
+            "level":"INFO",
+            "message": "I'm not crazy you're the ones who are crazy"}"#;
         let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
         assert_eq!(parsed.message, "I'm not crazy you're the ones who are crazy");
         let logline = r#"{"timestamp": "2025-07-30T17:41-07:00",
             "message":"I'm not crazy you're the ones who are crazy",
+            "level":"WARN",
             "request_id":"institutionalized"}"#;
         let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
         assert_eq!(parsed.request_id, Some("institutionalized".to_string()));
         let logline = r#"{"ts": "2025-07-30T17:41-07:00",
             "msg":"I'm not crazy you're the ones who are crazy",
+            "lvl":"CRITICAL",
             "requestId":"institutionalized"}"#;
         let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
         assert_eq!(parsed.request_id, Some("institutionalized".to_string()));

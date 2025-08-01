@@ -4,7 +4,7 @@ All I wanted was a newline-delimited json log pretty-printer, and they wouldn't 
 
 ## Usage
 
-At the moment all it does is pretty-print what you pipe into stdin. Sometime quite soon it will tail ndjson log files. And some time very soon after *that* it will tail with an offset from the end of the file. And then it will follow with a `-f` option. I have no plans to do any of the other `tail` options.
+At the moment all it does is pretty-print what you pipe into stdin. Sometime quite soon it will cat a given file name. And some time very soon after *that* it will cat with an offset from the end of the file. And then it will follow with a `-f` option. I have no plans to do any of the other `tail` options.
 
 ## Attribution
 
