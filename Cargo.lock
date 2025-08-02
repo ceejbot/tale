@@ -161,15 +161,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "humansize"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb51c9a029ddc91b07a787f1d86b53ccfa49b0e86688c946ebe8d3555685dd7"
-dependencies = [
- "libm",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,12 +218,6 @@ name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
-
-[[package]]
-name = "libm"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "linux-raw-sys"
@@ -381,16 +366,15 @@ dependencies = [
 name = "tale"
 version = "0.1.0"
 dependencies = [
+ "ansi-width",
  "anyhow",
  "clap",
- "humansize",
  "jiff",
  "owo-colors",
  "serde",
  "serde_json",
  "tempfile",
  "terminal_size",
- "uutils_term_grid",
 ]
 
 [[package]]
@@ -433,15 +417,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "uutils_term_grid"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcba141ce511bad08e80b43f02976571072e1ff4286f7d628943efbd277c6361"
-dependencies = [
- "ansi-width",
-]
 
 [[package]]
 name = "wasi"

@@ -38,7 +38,7 @@ I have no plans to do any of the other `tail` options.
 Tailing is not implemented yet.
 
 I'm going to have to completely rewrite layout to do it by hand instead of using an existing
-package, I think. I have too many opinions. (Columns are not the right paradigm.)
+package, I think. I have too many opinions. (Columns are not the right paradigm.) Update: I have done this, but it's likely staggeringly inefficient in the first implementation.
 
 Its behavior is probably pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode.
 

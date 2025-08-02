@@ -1,20 +1,19 @@
 //! Pretty-print newline-delimited json (ndjson) logs.
 //! No more, no less.
 
-use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use ansi_width::ansi_width;
 use anyhow::anyhow;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
-use owo_colors::OwoColorize;
-use serde::Deserialize;
-use serde_json::Value;
-use term_grid::{Filling, Grid, GridOptions};
+
+mod loglines;
+use loglines::*;
 
 #[derive(Debug, Clone, Parser)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
@@ -47,104 +46,6 @@ fn v3_styles() -> Styles {
         .placeholder(AnsiColor::Green.on_default())
 }
 
-/// A log line, somewhat flexibly formatted. There are two fields that we demand
-/// be present: a log level and a message. We allow several possible names for
-/// common log fields. The rest of the fields are mentioned only so we can print
-/// them in a controlled order. We do not demand that they be present.
-#[derive(Debug, Clone, Deserialize)]
-struct Message {
-    /// The time this message was logged.
-    #[serde(alias = "time", alias = "ts")]
-    timestamp: Option<jiff::Timestamp>,
-    /// The string message part of the log line.
-    #[serde(alias = "msg")]
-    message: String,
-    /// Log level for this line.
-    #[serde(alias = "lvl", alias = "severity")]
-    level: String,
-    /// A request id
-    #[serde(alias = "requestId")]
-    request_id: Option<String>,
-    /// Remote host.
-    #[serde(alias = "hostname", alias = "remote_host")]
-    host: Option<String>,
-    /// http method
-    method: Option<String>,
-    /// a url
-    url: Option<String>,
-    /// http response status code
-    #[serde(alias = "statusCode", alias = "code")]
-    status: Option<String>,
-    /// elapsed time
-    #[serde(alias = "elapsed_ms", alias = "elapsed_time")]
-    elapsed: Option<String>,
-    /// size of the written response
-    #[serde(alias = "sent_bytes", alias = "length", alias = "written")]
-    bytes: Option<String>,
-    /// The unpredictable parts of the log line we want to handle generally.
-    #[serde(flatten)]
-    rest: serde_json::Value,
-}
-
-impl Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let show_time = CONFIG.get().is_some_and(|v| v.show_time);
-        let mut cells: Vec<String> = Vec::new();
-
-        if show_time && let Some(ref v) = self.timestamp {
-            cells.push(format!("{}", v.strftime("%F-%T").blue()));
-        }
-
-        cells.push(format!("{}", self.level.bold().bright_blue()));
-        cells.push(format!("{}", self.message.bold()));
-
-        if let Some(ref v) = self.request_id {
-            cells.push(format!("reqid: {}", v.bright_yellow()));
-        }
-        if let Some(ref v) = self.host {
-            cells.push(format!("host: {}", v.green()));
-        }
-        if let Some(ref v) = self.method {
-            cells.push(format!("{}", v.blue()));
-        }
-        if let Some(ref v) = self.url {
-            cells.push(format!("{}", v.blue()));
-        }
-        if let Some(ref v) = self.status {
-            cells.push(format!("{}", v.purple()));
-        }
-        // todo humanize ? unsure the units here might vary, so maybe not.
-        if let Some(ref v) = self.elapsed {
-            cells.push(format!("elapsed: {}", v.bright_purple()));
-        }
-        // todo humanize ? same comment as above.
-        if let Some(ref v) = self.bytes {
-            cells.push(format!("written: {}", v.magenta()));
-        }
-        match self.rest {
-            Value::Object(ref map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(format!("{}: {}", key.dimmed(), value.cyan()));
-                });
-            }
-            _ => {
-                let the_rest = self.rest.as_str().unwrap_or_default();
-                cells.push(the_rest.to_string());
-            }
-        }
-
-        let grid = Grid::new(
-            cells,
-            GridOptions {
-                filling: Filling::Spaces(2),
-                direction: term_grid::Direction::LeftToRight,
-                width: 120,
-            },
-        );
-        write!(f, "{grid}")
-    }
-}
-
 /*
 
 CRITICAL module::thing::foobl > message here with rest of width
@@ -154,24 +55,74 @@ blank    timing / bytes       > STATUS VERB URL if present
          bytes                > key: value pairs to fill space, wrapping, left aligned at this column
 
  */
-fn _layout(_cells: Vec<String>) -> Vec<String> {
+static LEVEL_COL: usize = 8;
+static MODULE_COL: usize = 20;
+static COL_SEP: &str = " > ";
+
+fn layout<T>(logline: T) -> Vec<String>
+where
+    T: PrettyPrintable,
+{
     let size = terminal_size::terminal_size();
-    let _width = if let Some((terminal_size::Width(w), _)) = size {
-        w
+    let termwidth = if let Some((terminal_size::Width(w), _)) = size {
+        w as usize
     } else {
         80
     };
+    let max_message_width = termwidth - LEVEL_COL - MODULE_COL - 4; // col spacers count
+    let min_message_width = std::cmp::min(max_message_width, 50);
+    let num_cols = if CONFIG.get().is_some_and(|v| v.show_time) {
+        3
+    } else {
+        2
+    };
 
-    todo!()
+    let cells = logline.cells();
+    if cells.is_empty() {
+        return Vec::new();
+    };
+
+    // we now lay out the cells in a new vector of lines, re-using a
+    // pre-alloced buffer to stay thrifty. They are in the correct order
+    // already, so all we have to do is fill in our columns.
+    let mut lines = Vec::new();
+    let mut cell_iter = cells.into_iter();
+
+    let mut line: String;
+    // first line is special
+    let padding = if num_cols == 3 {
+        let first = cell_iter.next().unwrap_or_default();
+        let second = cell_iter.next().unwrap_or_default();
+        let message = cell_iter.next().unwrap_or_default();
+        // TODO linewrap message
+        line = format!("{first} {second}{COL_SEP}{message:<min_message_width$}");
+        LEVEL_COL + 1 + MODULE_COL + ansi_width(COL_SEP)
+    } else {
+        let first = cell_iter.next().unwrap_or_default();
+        let message = cell_iter.next().unwrap_or_default();
+        line = format!("{first}{COL_SEP}{message:<min_message_width$}");
+        LEVEL_COL + ansi_width(COL_SEP)
+    };
+    for next in cell_iter {
+        if ansi_width(line.as_str()) + ansi_width(next.as_str()) < termwidth {
+            line = format!("{line}  {next}");
+        } else {
+            lines.push(line);
+            line = format!("{COL_SEP:>padding$}{next}");
+        }
+    }
+    lines.push(line);
+
+    lines
 }
 
 #[derive(Debug, Clone, Default)]
-struct Tally {
+struct ConfigOpts {
     tailing: bool,
     show_time: bool,
 }
 
-static CONFIG: OnceLock<Tally> = OnceLock::new();
+static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
 
 fn handle_stdin(tail: bool) -> anyhow::Result<()> {
     let mut line = String::new();
@@ -179,7 +130,7 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
     let mut outlock = io::stdout().lock();
 
     while inlock.read_line(&mut line)? != 0 {
-        match serde_json::from_str::<Message>(line.as_str()) {
+        match serde_json::from_str::<Printable>(line.as_str()) {
             Ok(message) => {
                 writeln!(outlock, "{message}")?;
             }
@@ -310,7 +261,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         let Ok(line) = maybe_line else {
             break;
         };
-        match serde_json::from_str::<Message>(&line) {
+        match serde_json::from_str::<Printable>(&line) {
             Ok(message) => {
                 write!(outlock, "{message}")?;
                 if count >= FLUSH_INTERVAL {
@@ -366,13 +317,13 @@ fn parse_tail_args(args: Vec<String>) -> anyhow::Result<(Option<i64>, Option<Pat
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let config = Tally {
+    let config = ConfigOpts {
         tailing: args.follow,
         show_time: args.timestamps,
     };
     CONFIG
         .set(config)
-        .expect("Quite improbably failed to set a OnceLock on process start.");
+        .expect("Quite improbably failed to set config OnceLock on process start.");
 
     let (offset, file_path) = parse_tail_args(args.args)?;
 
@@ -404,35 +355,6 @@ mod tests {
     fn verify_cli() {
         use clap::CommandFactory;
         Args::command().debug_assert();
-    }
-
-    #[test]
-    fn logline_deser() {
-        let logline = r#"{
-            "timestamp": "2025-07-30T17:41-07:00",
-            "level":"INFO",
-            "message": "I'm not crazy you're the ones who are crazy"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        assert_eq!(parsed.message, "I'm not crazy you're the ones who are crazy");
-        let logline = r#"{"timestamp": "2025-07-30T17:41-07:00",
-            "message":"I'm not crazy you're the ones who are crazy",
-            "level":"WARN",
-            "request_id":"institutionalized"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        assert_eq!(parsed.request_id, Some("institutionalized".to_string()));
-        let logline = r#"{"ts": "2025-07-30T17:41-07:00",
-            "msg":"I'm not crazy you're the ones who are crazy",
-            "lvl":"CRITICAL",
-            "requestId":"institutionalized"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        assert_eq!(parsed.request_id, Some("institutionalized".to_string()));
-    }
-
-    #[test]
-    fn not_loglines() {
-        let logline = r#"Sometimes, I try to do things / And it just doesn't work out the way I want it to"#;
-        let error = serde_json::from_str::<Message>(logline);
-        assert!(error.is_err());
     }
 
     #[test]
@@ -479,5 +401,64 @@ mod tests {
 
         let pos = seek_backwards(&mut file, 5).expect("Failed to find position");
         assert_eq!(pos, 0);
+    }
+
+    #[test]
+    fn layout_one() {
+        let logline = r##"{
+            "timestamp": "2025-08-01T10:45:03Z",
+            "level": "CRITICAL",
+            "message": "Database query failed",
+            "query": "SELECT * FROM users WHERE id = ?",
+            "error_code": "ER_NO_SUCH_TABLE",
+            "elapsed": "250ms"
+        }"##;
+        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
+        let lines = layout(&parsed);
+        let length = lines.len();
+        assert_eq!(length, 2);
+    }
+
+    #[test]
+    fn layout_two() {
+        let logline = r##"
+            {"time": "2025-08-01T10:30:17Z",
+            "level": "INFO",
+            "message": "Database connection established",
+            "host": "db.example.com", "database": "production"} "##;
+        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
+        eprintln!("{parsed:#?}");
+        let lines = layout(&parsed);
+        eprintln!("got {} lines back", lines.len());
+        for l in lines {
+            eprintln!("{l}");
+        }
+        assert!(false);
+    }
+
+    #[test]
+    fn layout_with_time() {
+        let logline = r##"
+            {"time": "2025-08-01T10:30:17Z",
+            "level": "INFO",
+            "message": "Database connection established",
+            "host": "db.example.com", "database": "production"} "##;
+        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
+        eprintln!("{parsed:#?}");
+
+        let config = ConfigOpts {
+            tailing: false,
+            show_time: true,
+        };
+        CONFIG
+            .set(config)
+            .expect("Quite improbably failed to set config OnceLock in a test.");
+
+        let lines = layout(&parsed);
+        eprintln!("got {} lines back", lines.len());
+        for l in lines {
+            eprintln!("{l}");
+        }
+        assert!(false);
     }
 }
