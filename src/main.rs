@@ -60,7 +60,7 @@ struct Message {
     #[serde(alias = "msg")]
     message: String,
     /// Log level for this line.
-    #[serde(alias = "lvl")]
+    #[serde(alias = "lvl", alias = "severity")]
     level: String,
     /// A request id
     #[serde(alias = "requestId")]

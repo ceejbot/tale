@@ -14,17 +14,11 @@ The timestamp field may be named `time`, `ts`, or `timestamp`. The message field
 log structures, but will print out every field that shows up in the log line, using the color theme
 you have set in your terminal.
 
-Usage: tale [OPTIONS] [OFFSET] [FILE]
+Usage: tale [OPTIONS] [ARGS]...
 
 Arguments:
-  [OFFSET]
-          If prefixed with -, the number of lines from the end to start reading from. If prefixed
-          with +, the number of lines from the start. Only makes sense if you're tailing a file
-          [default: 0]
-
-  [FILE]
-          Pretty-print the named file; defaults to printing stdin if not provided
-          [default: ]
+  [ARGS]...
+          Arguments: [offset] [file] where offset can be -N, +N, or N
 
 Options:
   -t, --timestamps
