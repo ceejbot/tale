@@ -195,6 +195,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
             Ok(message) => {
                 message.write(&mut buffer);
                 outlock.write_all(buffer.chunk())?;
+                outlock.write_all(&[0x0a; 1])?; // blank line
                 if count >= FLUSH_INTERVAL {
                     outlock.flush()?;
                     count = 0;

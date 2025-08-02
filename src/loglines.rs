@@ -12,10 +12,38 @@ use textwrap::termwidth;
 
 use crate::CONFIG;
 
-pub fn colorize_json(key: &str, value: &serde_json::Value) -> String {
+pub fn colorize_json_value(value: &serde_json::Value) -> String {
+    match value {
+        Value::Null => "null".red().to_string(),
+        Value::Bool(b) => b.cyan().to_string(),
+        Value::Number(number) => number.bright_magenta().to_string(),
+        Value::String(text) => {
+            let val = format!("\"{text}\"");
+            val.green().to_string()
+        }
+        Value::Array(values) => {
+            let valstrs: Vec<String> = values.iter().map(|xs| colorize_json_value(xs)).collect();
+            valstrs.join(", ")
+        }
+        Value::Object(object) => {
+            format!(
+                "{}{}{}",
+                "{ ".to_string(),
+                object
+                    .iter()
+                    .map(|(k, v)| colorize_map_entry(k, v))
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                " }".to_string()
+            )
+        }
+    }
+}
+
+pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
     match value {
         Value::Null => {
-            format!("{}{}", key.dimmed(), "=null")
+            format!("{}={}", key.dimmed(), "null".red())
         }
         Value::Bool(b) => format!("{}={}", key.dimmed(), b.cyan()),
         Value::Number(number) => format!("{}={}", key.dimmed(), number.bright_magenta()),
@@ -23,21 +51,12 @@ pub fn colorize_json(key: &str, value: &serde_json::Value) -> String {
             let val = format!("\"{text}\"");
             format!("{}={}", key.dimmed(), val.green())
         }
-        Value::Array(values) => format!(
-            "{}={}",
-            key.dimmed(),
-            serde_json::to_string_pretty(values).unwrap_or_default()
-        ),
-        Value::Object(map) => {
-            if map.len() < 6 {
-                let mut formatted = "{ ".to_string();
-                for (k, v) in map {
-                    formatted = format!("{formatted}{:<} ", colorize_json(k, v));
-                }
-                format!("{formatted}}}")
-            } else {
-                format!("{}: object with {} keys", key.dimmed(), map.len().magenta())
-            }
+        Value::Array(values) => {
+            let valstrs: Vec<String> = values.iter().map(|xs| colorize_json_value(xs)).collect();
+            valstrs.join(", ")
+        }
+        Value::Object(_) => {
+            format!("{}={}", key.dimmed(), colorize_json_value(value))
         }
     }
 }
@@ -110,11 +129,11 @@ impl PrettyPrintable for &GenericJson {
         match self.rest {
             Value::Object(ref map) => {
                 map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_json(key, value));
+                    cells.push(colorize_map_entry(key, value));
                 });
             }
             _ => {
-                cells.push(colorize_json("rest", &self.rest));
+                cells.push(colorize_map_entry("rest", &self.rest));
             }
         }
 
@@ -355,6 +374,10 @@ impl PrettyPrintable for &Message {
             cells.push(format!("{}", req_line.blue()));
         }
 
+        if let Some(ref v) = self.host {
+            cells.push(format!("{}{}", "host=".dimmed(), v.blue()));
+        }
+
         // Units and format are unpredictable, so we leave it as-is.
         if let Some(ref v) = self.elapsed {
             cells.push(format!("{}{}", "elapsed=".dimmed(), v.bright_purple()));
@@ -367,11 +390,11 @@ impl PrettyPrintable for &Message {
         match self.rest {
             Value::Object(ref map) => {
                 map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_json(key, value));
+                    cells.push(colorize_map_entry(key, value));
                 });
             }
             _ => {
-                cells.push(colorize_json("rest", &self.rest));
+                cells.push(colorize_map_entry("rest", &self.rest));
             }
         }
 
