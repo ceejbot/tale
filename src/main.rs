@@ -105,6 +105,7 @@ where
         let mut chunks = message.split('\n');
         if let Some(next) = chunks.next() {
             lines.push(format!("{line}{next}"));
+            line = format!("{COL_SEP:>padding$}");
         }
         for chunk in chunks {
             lines.push(format!("{COL_SEP:>padding$}{chunk}"));
