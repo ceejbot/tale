@@ -8,7 +8,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219e3ce6f2611d83b51ec2098a12702112c29e57203a6b0a0929b2cddb486608"
 dependencies = [
- "unicode-width 0.1.14",
+ "unicode-width",
 ]
 
 [[package]]
@@ -378,15 +378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tabwriter"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fce91f2f0ec87dff7e6bcbbeb267439aa1188703003c6055193c821487400432"
-dependencies = [
- "unicode-width 0.2.1",
-]
-
-[[package]]
 name = "tale"
 version = "0.1.0"
 dependencies = [
@@ -397,7 +388,6 @@ dependencies = [
  "owo-colors",
  "serde",
  "serde_json",
- "tabwriter",
  "tempfile",
  "terminal_size",
  "uutils_term_grid",
@@ -437,12 +427,6 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
-
-[[package]]
-name = "unicode-width"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a1a07cc7db3810833284e8d372ccdc6da29741639ecc70c9ec107df0fa6154c"
 
 [[package]]
 name = "utf8parse"

@@ -14,7 +14,6 @@ use clap::builder::styling::AnsiColor;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_json::Value;
-use tabwriter::TabWriter;
 use term_grid::{Filling, Grid, GridOptions};
 
 #[derive(Debug, Clone, Parser)]
@@ -34,14 +33,9 @@ struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long)]
     follow: bool,
-    /// If prefixed with -, the number of lines from the end to start reading
-    /// from. If prefixed with +, the number of lines from the start.
-    /// Only makes sense if you're tailing a file.
-    #[arg(default_value = "0")]
-    offset: String,
-    /// Pretty-print the named file; defaults to stdin if not provided.
-    #[arg(default_value = "", name = "FILE")]
-    tail: String,
+    /// Arguments: [offset] [file] where offset can be -N, +N, or N
+    #[arg(allow_hyphen_values = true)]
+    args: Vec<String>,
 }
 
 /// I like my clap help styled the old way.
@@ -90,74 +84,6 @@ struct Message {
     /// The unpredictable parts of the log line we want to handle generally.
     #[serde(flatten)]
     rest: serde_json::Value,
-}
-
-impl Message {
-    pub fn write<T>(&self, tabby: &mut TabWriter<T>, show_time: bool) -> anyhow::Result<()>
-    where
-        T: Write,
-    {
-        let mut cells: Vec<String> = Vec::new();
-
-        if show_time && let Some(ref v) = self.timestamp {
-            cells.push(format!("{}", v.strftime("%F-%T").blue()));
-        }
-
-        cells.push(format!("{}", self.level.bold().bright_blue()));
-        cells.push(format!("{}", self.message.bold()));
-
-        if let Some(ref v) = self.request_id {
-            cells.push(format!("reqid: {}", v.bright_yellow()));
-        }
-        if let Some(ref v) = self.host {
-            cells.push(format!("host: {}", v.green()));
-        }
-        if let Some(ref v) = self.method {
-            cells.push(format!("{}", v.blue()));
-        }
-        if let Some(ref v) = self.url {
-            cells.push(format!("{}", v.blue()));
-        }
-        if let Some(ref v) = self.status {
-            cells.push(format!("{}", v.purple()));
-        }
-        // todo humanize ? unsure the units here might vary, so maybe not.
-        if let Some(ref v) = self.elapsed {
-            cells.push(format!("elapsed: {}", v.bright_purple()));
-        }
-        // todo humanize ? same comment as above.
-        if let Some(ref v) = self.bytes {
-            cells.push(format!("written: {}", v.magenta()));
-        }
-        match self.rest {
-            Value::Object(ref map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(format!("{}: {}", key.dimmed(), value.cyan()));
-                });
-            }
-            _ => {
-                let the_rest = self.rest.as_str().unwrap_or_default();
-                cells.push(the_rest.to_string());
-            }
-        }
-
-        // Now we print.
-        let _results: Vec<Result<(), std::io::Error>> = cells
-            .iter()
-            .enumerate()
-            .map(|(i, xs)| {
-                if i % 4 == 0 {
-                    write!(tabby, " \t")?;
-                }
-                if i % 3 == 0 {
-                    writeln!(tabby)?;
-                }
-                write!(tabby, "{xs}\t")?;
-                Ok(())
-            })
-            .collect();
-        Ok(())
-    }
 }
 
 impl Display for Message {
@@ -228,9 +154,9 @@ blank    timing / bytes       > STATUS VERB URL if present
          bytes                > key: value pairs to fill space, wrapping, left aligned at this column
 
  */
-fn layout(cells: Vec<String>) -> Vec<String> {
+fn _layout(_cells: Vec<String>) -> Vec<String> {
     let size = terminal_size::terminal_size();
-    let width = if let Some((terminal_size::Width(w), _)) = size {
+    let _width = if let Some((terminal_size::Width(w), _)) = size {
         w
     } else {
         80
@@ -240,30 +166,25 @@ fn layout(cells: Vec<String>) -> Vec<String> {
 }
 
 #[derive(Debug, Clone, Default)]
-struct Soot {
+struct Tally {
     tailing: bool,
     show_time: bool,
 }
 
-static CONFIG: OnceLock<Soot> = OnceLock::new();
+static CONFIG: OnceLock<Tally> = OnceLock::new();
 
 fn handle_stdin(tail: bool) -> anyhow::Result<()> {
     let mut line = String::new();
     let mut inlock = io::stdin().lock();
     let mut outlock = io::stdout().lock();
-    // let mut tabby = TabWriter::new(outlock).ansi(true).minwidth(10);
 
     while inlock.read_line(&mut line)? != 0 {
         match serde_json::from_str::<Message>(line.as_str()) {
             Ok(message) => {
                 writeln!(outlock, "{message}")?;
-                //message.write(&mut tabby, show_time)?;
-                //tabby.flush()?;
             }
             Err(_) => {
                 writeln!(outlock, "{line}")?;
-                //tabby.write_all(line.as_bytes())?;
-                //tabby.flush()?;
             }
         }
         line.clear();
@@ -351,11 +272,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         return Err(anyhow!("{} is not a file!", fpath.display()));
     }
 
-    let show_time = CONFIG.get().is_some_and(|v| v.show_time);
     let tailing = CONFIG.get().is_some_and(|v| v.tailing);
-
-    let outlock = io::stdout().lock();
-    let mut tabby = TabWriter::new(outlock).ansi(true).minwidth(10);
 
     let mut file = File::open(&fpath)?;
 
@@ -384,9 +301,8 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         let _count = consume_me.count();
     };
 
-    // Now at last we get to start printing. What a fuss. We need to call flush
-    // periodically so tabwriter writes, but we don't want to call it too often or
-    // it won't align usefully.
+    // Now at last we get to start printing. What a fuss.
+    let mut outlock = io::stdout().lock();
     const FLUSH_INTERVAL: u8 = 40;
 
     let mut count: u8 = 0;
@@ -396,21 +312,21 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         };
         match serde_json::from_str::<Message>(&line) {
             Ok(message) => {
-                message.write(&mut tabby, show_time)?;
+                write!(outlock, "{message}")?;
                 if count >= FLUSH_INTERVAL {
-                    tabby.flush()?;
+                    outlock.flush()?;
                     count = 0;
                 }
                 count += 1;
             }
             Err(_) => {
-                writeln!(tabby, "{line}")?;
+                writeln!(outlock, "{line}")?;
                 count = 0;
-                tabby.flush()?;
+                outlock.flush()?;
             }
         }
     }
-    tabby.flush()?;
+    outlock.flush()?;
 
     if !CONFIG.get().is_some_and(|v| v.tailing) {
         return Ok(());
@@ -421,10 +337,36 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn parse_tail_args(args: Vec<String>) -> anyhow::Result<(Option<i64>, Option<PathBuf>)> {
+    match args.len() {
+        0 => Ok((None, None)), // stdin
+        1 => {
+            let first = &args[0];
+            if (first.starts_with('-') || first.starts_with('+'))
+                && first.len() > 1
+                && let Ok(offset) = first.parse::<i64>()
+            {
+                // It's a numeric offset like "-4" or "+4"
+                Ok((Some(offset), None)) // stdin with offset
+            } else {
+                // It's a filename
+                Ok((None, Some(PathBuf::from(first))))
+            }
+        }
+        2 => {
+            let (offset_str, file_str) = (&args[0], &args[1]);
+            let offset = offset_str.parse::<i64>()?;
+            let file_path = PathBuf::from(file_str);
+            Ok((Some(offset), Some(file_path)))
+        }
+        _ => Err(anyhow!("Too many arguments")),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let config = Soot {
+    let config = Tally {
         tailing: args.follow,
         show_time: args.timestamps,
     };
@@ -432,21 +374,25 @@ fn main() -> anyhow::Result<()> {
         .set(config)
         .expect("Quite improbably failed to set a OnceLock on process start.");
 
-    // A bit fiddly but: if we see args.offset = "0" and args.tail = empty,
-    // we do stdin and stop at EOF. If we see args.offset = some string and
-    // args.tail = empty, we tail the given file from the end. Otherwise,
-    // we do the tail the named file from the offset thing. We do not yet
-    // try to be fancy and tail multiple files. If we will ever do such a thing.
+    let (offset, file_path) = parse_tail_args(args.args)?;
 
-    if args.offset == "0" && args.tail.is_empty() {
-        handle_stdin(args.follow)
-    } else if args.tail.is_empty() {
-        let fpath = PathBuf::from(args.offset);
-        handle_file(fpath, 0)
-    } else {
-        let fpath = PathBuf::from(args.tail);
-        let offset: i64 = args.offset.parse::<i64>()?;
-        handle_file(fpath, offset)
+    match (offset, file_path) {
+        (None, None) => {
+            // No arguments: read from stdin
+            handle_stdin(args.follow)
+        }
+        (Some(_offset), None) => {
+            // Offset only: read from stdin with offset (not really useful but supported)
+            handle_stdin(args.follow)
+        }
+        (None, Some(file_path)) => {
+            // File only: read entire file
+            handle_file(file_path, 0)
+        }
+        (Some(offset), Some(file_path)) => {
+            // Both offset and file: read file from offset
+            handle_file(file_path, offset)
+        }
     }
 }
 
