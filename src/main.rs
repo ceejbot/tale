@@ -7,12 +7,11 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use anyhow::anyhow;
+use bytes::{Buf, BytesMut};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
 
-mod layout;
-use layout::*;
 mod loglines;
 use loglines::*;
 
@@ -177,7 +176,6 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
 
     // If we've got a positive offset, we still need to skip our N lines
     if offset > 0 {
-        println!("we are skipping {offset} lines");
         let consume_me = by_lines.by_ref().take(offset as usize);
         // we then must consume them. this feels v inefficient but I do not know.
         let _count = consume_me.count();
@@ -185,6 +183,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
 
     // Now at last we get to start printing. What a fuss.
     let mut outlock = io::stdout().lock();
+    let mut buffer = BytesMut::with_capacity(2048);
     const FLUSH_INTERVAL: u8 = 40;
 
     let mut count: u8 = 0;
@@ -194,7 +193,8 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         };
         match serde_json::from_str::<Printable>(&line) {
             Ok(message) => {
-                write!(outlock, "{message}")?;
+                message.write(&mut buffer);
+                outlock.write_all(buffer.chunk())?;
                 if count >= FLUSH_INTERVAL {
                     outlock.flush()?;
                     count = 0;
@@ -207,6 +207,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
                 outlock.flush()?;
             }
         }
+        buffer.clear();
     }
     outlock.flush()?;
 
@@ -345,8 +346,9 @@ mod tests {
             "elapsed": "250ms"
         }"##;
         let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        let lines = layout(&parsed);
+        let stringy = parsed.to_string();
+        let lines: Vec<&str> = stringy.split('\n').collect();
         let length = lines.len();
-        assert_eq!(length, 3);
+        assert_eq!(length, 5);
     }
 }
