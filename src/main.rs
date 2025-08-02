@@ -11,6 +11,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
+use textwrap::termwidth;
 
 mod loglines;
 use loglines::*;
@@ -63,12 +64,7 @@ fn layout<T>(logline: T) -> Vec<String>
 where
     T: PrettyPrintable,
 {
-    let size = terminal_size::terminal_size();
-    let termwidth = if let Some((terminal_size::Width(w), _)) = size {
-        w as usize
-    } else {
-        80
-    };
+    let termwidth = termwidth();
     let max_message_width = termwidth - LEVEL_COL - MODULE_COL - 4; // col spacers count
     let min_message_width = std::cmp::min(max_message_width, 50);
     let num_cols = if CONFIG.get().is_some_and(|v| v.show_time) {
@@ -83,7 +79,7 @@ where
     };
 
     // we now lay out the cells in a new vector of lines, re-using a
-    // pre-alloced buffer to stay thrifty. They are in the correct order
+    // pre-alloced buffer to stay thrifty. (TODO) They are in the correct order
     // already, so all we have to do is fill in our columns.
     let mut lines = Vec::new();
     let mut cell_iter = cells.into_iter();
@@ -93,19 +89,47 @@ where
     let padding = if num_cols == 3 {
         let first = cell_iter.next().unwrap_or_default();
         let second = cell_iter.next().unwrap_or_default();
-        let message = cell_iter.next().unwrap_or_default();
-        // TODO linewrap message
-        line = format!("{first} {second}{COL_SEP}{message:<min_message_width$}");
+        line = format!("{first} {second}{COL_SEP}");
         LEVEL_COL + 1 + MODULE_COL + ansi_width(COL_SEP)
     } else {
         let first = cell_iter.next().unwrap_or_default();
-        let message = cell_iter.next().unwrap_or_default();
-        line = format!("{first}{COL_SEP}{message:<min_message_width$}");
+        line = format!("{first}{COL_SEP}");
         LEVEL_COL + ansi_width(COL_SEP)
     };
+
+    // Now the fun starts. We want to fill the next column with a long message if
+    // needed.
+    let message = cell_iter.next().unwrap_or_default();
+    if message.contains('\n') {
+        // We're not going to rewrap it, but instead use the lines as-is.
+        let mut chunks = message.split('\n');
+        if let Some(next) = chunks.next() {
+            lines.push(format!("{line}{next}"));
+        }
+        for chunk in chunks {
+            lines.push(format!("{COL_SEP:>padding$}{chunk}"));
+        }
+    } else {
+        let chunks = textwrap::wrap(message.as_str(), max_message_width);
+        if chunks.len() == 1 {
+            // we pad it out to the min
+            line = format!("{line}{message:<min_message_width$}");
+        } else {
+            let mut chunk_iter = chunks.iter();
+            if let Some(next) = chunk_iter.next() {
+                lines.push(format!("{line}{next}"));
+                // the next chunk goes on a new line
+                line = format!("{COL_SEP:>padding$}");
+            }
+            for chunk in chunk_iter {
+                lines.push(format!("{COL_SEP:>padding$}{chunk}"));
+            }
+        }
+    }
+
     for next in cell_iter {
         if ansi_width(line.as_str()) + ansi_width(next.as_str()) < termwidth {
-            line = format!("{line}  {next}");
+            line = format!("{line}{next}  ");
         } else {
             lines.push(line);
             line = format!("{COL_SEP:>padding$}{next}");
@@ -416,49 +440,6 @@ mod tests {
         let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
         let lines = layout(&parsed);
         let length = lines.len();
-        assert_eq!(length, 2);
-    }
-
-    #[test]
-    fn layout_two() {
-        let logline = r##"
-            {"time": "2025-08-01T10:30:17Z",
-            "level": "INFO",
-            "message": "Database connection established",
-            "host": "db.example.com", "database": "production"} "##;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        eprintln!("{parsed:#?}");
-        let lines = layout(&parsed);
-        eprintln!("got {} lines back", lines.len());
-        for l in lines {
-            eprintln!("{l}");
-        }
-        assert!(false);
-    }
-
-    #[test]
-    fn layout_with_time() {
-        let logline = r##"
-            {"time": "2025-08-01T10:30:17Z",
-            "level": "INFO",
-            "message": "Database connection established",
-            "host": "db.example.com", "database": "production"} "##;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        eprintln!("{parsed:#?}");
-
-        let config = ConfigOpts {
-            tailing: false,
-            show_time: true,
-        };
-        CONFIG
-            .set(config)
-            .expect("Quite improbably failed to set config OnceLock in a test.");
-
-        let lines = layout(&parsed);
-        eprintln!("got {} lines back", lines.len());
-        for l in lines {
-            eprintln!("{l}");
-        }
-        assert!(false);
+        assert_eq!(length, 3);
     }
 }

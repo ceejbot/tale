@@ -59,19 +59,19 @@ fn colorize_json(key: &str, value: &serde_json::Value) -> String {
         Value::Null => format!("{}=null", key.dimmed()),
         Value::Bool(b) => format!("{}={}", key.dimmed(), b.cyan()),
         Value::Number(number) => format!("{}={}", key.dimmed(), number.bright_magenta()),
-        Value::String(text) => format!("{}={}", key.dimmed(), text.green()),
+        Value::String(text) => format!("{}=\"{}\"", key.dimmed(), text.green()),
         Value::Array(values) => format!(
-            "{}: {}",
+            "{}={}",
             key.dimmed(),
             serde_json::to_string_pretty(values).unwrap_or_default()
         ),
         Value::Object(map) => {
             if map.len() < 6 {
-                let mut formatted = String::default();
+                let mut formatted = "{ ".to_string();
                 for (k, v) in map {
                     formatted = format!("{formatted}{} ", colorize_json(k, v));
                 }
-                formatted
+                format!("{formatted}}}")
             } else {
                 format!("{}: object with {} keys", key.dimmed(), map.len().magenta())
             }

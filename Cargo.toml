@@ -2,7 +2,8 @@
 name = "tale"
 version = "0.1.0"
 description = "Pretty-print ndjson log lines"
-categories = ["command-line-utilities"]
+categories = ["command-line-utilities", "text-processing"]
+keywords = ["ndjson", "pretty-print", "logging", "json"]
 authors = ["C J Silverio <ceejceej@gmail.com>"]
 edition = "2024"
 readme = "README.md"
@@ -18,7 +19,7 @@ jiff = { version = "0.2.15", features = ["serde"] }
 owo-colors = "4.2.2"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
-terminal_size = "0.4.2"
+textwrap = { version = "0.16.2", features = ["terminal_size"] }
 
 [dev-dependencies]
 tempfile = "3.0"
