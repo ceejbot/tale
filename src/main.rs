@@ -6,13 +6,13 @@ use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use ansi_width::ansi_width;
 use anyhow::anyhow;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
-use textwrap::termwidth;
 
+mod layout;
+use layout::*;
 mod loglines;
 use loglines::*;
 
@@ -45,100 +45,6 @@ fn v3_styles() -> Styles {
         .usage(AnsiColor::Green.on_default())
         .literal(AnsiColor::Green.on_default())
         .placeholder(AnsiColor::Green.on_default())
-}
-
-/*
-
-CRITICAL module::thing::foobl > message here with rest of width
-LEVEL    MODULE or TIME       > message line wrapped if no line endings in it; as-is if \n present
-8char    20 char              > termwidth - 32 char wide
-blank    timing / bytes       > STATUS VERB URL if present
-         bytes                > key: value pairs to fill space, wrapping, left aligned at this column
-
- */
-static LEVEL_COL: usize = 8;
-static MODULE_COL: usize = 20;
-static COL_SEP: &str = " > ";
-
-fn layout<T>(logline: T) -> Vec<String>
-where
-    T: PrettyPrintable,
-{
-    let termwidth = termwidth();
-    let max_message_width = termwidth - LEVEL_COL - MODULE_COL - 4; // col spacers count
-    let min_message_width = std::cmp::min(max_message_width, 50);
-    let num_cols = if CONFIG.get().is_some_and(|v| v.show_time) {
-        3
-    } else {
-        2
-    };
-
-    let cells = logline.cells();
-    if cells.is_empty() {
-        return Vec::new();
-    };
-
-    // we now lay out the cells in a new vector of lines, re-using a
-    // pre-alloced buffer to stay thrifty. (TODO) They are in the correct order
-    // already, so all we have to do is fill in our columns.
-    let mut lines = Vec::new();
-    let mut cell_iter = cells.into_iter();
-
-    let mut line: String;
-    // first line is special
-    let padding = if num_cols == 3 {
-        let first = cell_iter.next().unwrap_or_default();
-        let second = cell_iter.next().unwrap_or_default();
-        line = format!("{first} {second}{COL_SEP}");
-        LEVEL_COL + 1 + MODULE_COL + ansi_width(COL_SEP)
-    } else {
-        let first = cell_iter.next().unwrap_or_default();
-        line = format!("{first}{COL_SEP}");
-        LEVEL_COL + ansi_width(COL_SEP)
-    };
-
-    // Now the fun starts. We want to fill the next column with a long message if
-    // needed.
-    let message = cell_iter.next().unwrap_or_default();
-    if message.contains('\n') {
-        // We're not going to rewrap it, but instead use the lines as-is.
-        let mut chunks = message.split('\n');
-        if let Some(next) = chunks.next() {
-            lines.push(format!("{line}{next}"));
-            line = format!("{COL_SEP:>padding$}");
-        }
-        for chunk in chunks {
-            lines.push(format!("{COL_SEP:>padding$}{chunk}"));
-        }
-    } else {
-        let chunks = textwrap::wrap(message.as_str(), max_message_width);
-        if chunks.len() == 1 {
-            // we pad it out to the min
-            line = format!("{line}{message:<min_message_width$}");
-        } else {
-            let mut chunk_iter = chunks.iter();
-            if let Some(next) = chunk_iter.next() {
-                lines.push(format!("{line}{next}"));
-                // the next chunk goes on a new line
-                line = format!("{COL_SEP:>padding$}");
-            }
-            for chunk in chunk_iter {
-                lines.push(format!("{COL_SEP:>padding$}{chunk}"));
-            }
-        }
-    }
-
-    for next in cell_iter {
-        if ansi_width(line.as_str()) + ansi_width(next.as_str()) < termwidth {
-            line = format!("{line}{next}  ");
-        } else {
-            lines.push(line);
-            line = format!("{COL_SEP:>padding$}{next}");
-        }
-    }
-    lines.push(line);
-
-    lines
 }
 
 #[derive(Debug, Clone, Default)]
