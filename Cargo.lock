@@ -399,6 +399,7 @@ dependencies = [
  "serde_json",
  "tabwriter",
  "tempfile",
+ "terminal_size",
  "uutils_term_grid",
 ]
 

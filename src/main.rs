@@ -29,10 +29,10 @@ use term_grid::{Filling, Grid, GridOptions};
 /// have set in your terminal.
 struct Args {
     /// Show timestamps, which are hidden by default.
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     timestamps: bool,
     /// Follow the file, continuing to watch for more data to arrive.
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     follow: bool,
     /// If prefixed with -, the number of lines from the end to start reading
     /// from. If prefixed with +, the number of lines from the start.
@@ -219,6 +219,26 @@ impl Display for Message {
     }
 }
 
+/*
+
+CRITICAL module::thing::foobl > message here with rest of width
+LEVEL    MODULE or TIME       > message line wrapped if no line endings in it; as-is if \n present
+8char    20 char              > termwidth - 32 char wide
+blank    timing / bytes       > STATUS VERB URL if present
+         bytes                > key: value pairs to fill space, wrapping, left aligned at this column
+
+ */
+fn layout(cells: Vec<String>) -> Vec<String> {
+    let size = terminal_size::terminal_size();
+    let width = if let Some((terminal_size::Width(w), _)) = size {
+        w
+    } else {
+        80
+    };
+
+    todo!()
+}
+
 #[derive(Debug, Clone, Default)]
 struct Soot {
     tailing: bool,
@@ -227,7 +247,7 @@ struct Soot {
 
 static CONFIG: OnceLock<Soot> = OnceLock::new();
 
-fn cat_stdin() -> anyhow::Result<()> {
+fn handle_stdin(tail: bool) -> anyhow::Result<()> {
     let mut line = String::new();
     let mut inlock = io::stdin().lock();
     let mut outlock = io::stdout().lock();
@@ -248,7 +268,7 @@ fn cat_stdin() -> anyhow::Result<()> {
         }
         line.clear();
     }
-    if !CONFIG.get().is_some_and(|v| v.tailing) {
+    if !tail {
         return Ok(());
     }
 
@@ -321,7 +341,7 @@ fn seek_backwards(file: &mut File, lines_from_end: u64) -> anyhow::Result<u64> {
     }
 }
 
-fn tail(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
+fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     use std::io::Seek;
 
     if !fpath.exists() {
@@ -358,7 +378,10 @@ fn tail(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
 
     // If we've got a positive offset, we still need to skip our N lines
     if offset > 0 {
-        let _ignored = by_lines.by_ref().take(offset as usize);
+        println!("we are skipping {offset} lines");
+        let consume_me = by_lines.by_ref().take(offset as usize);
+        // we then must consume them. this feels v inefficient but I do not know.
+        let _count = consume_me.count();
     };
 
     // Now at last we get to start printing. What a fuss. We need to call flush
@@ -416,14 +439,14 @@ fn main() -> anyhow::Result<()> {
     // try to be fancy and tail multiple files. If we will ever do such a thing.
 
     if args.offset == "0" && args.tail.is_empty() {
-        cat_stdin()
+        handle_stdin(args.follow)
     } else if args.tail.is_empty() {
         let fpath = PathBuf::from(args.offset);
-        tail(fpath, 0)
+        handle_file(fpath, 0)
     } else {
         let fpath = PathBuf::from(args.tail);
         let offset: i64 = args.offset.parse::<i64>()?;
-        tail(fpath, offset)
+        handle_file(fpath, offset)
     }
 }
 
