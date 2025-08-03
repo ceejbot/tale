@@ -70,6 +70,14 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
 
     // Process initial input until EOF
     while inlock.read_line(&mut line)? != 0 {
+        // Strip trailing newline to match BufReader::lines() behavior
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+
         match serde_json::from_str::<Printable>(line.as_str()) {
             Ok(message) => {
                 message.write(&mut buffer);
@@ -107,6 +115,16 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
                 continue;
             }
             _ => {
+                // Strip trailing newline to match BufReader::lines() behavior
+                // This is a clear signal that I need to refactor.
+                if line.ends_with('\n') {
+                    line.pop();
+                    // Windows line endings are probably hopeless, but…
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+
                 // New data available
                 match serde_json::from_str::<Printable>(line.as_str()) {
                     Ok(message) => {
