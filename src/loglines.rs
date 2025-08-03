@@ -9,10 +9,9 @@ use humansize::{BINARY, format_size};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_json::Value;
-use term_grid::{Direction, Filling, GridOptions};
 use textwrap::termwidth;
 
-use crate::CONFIG;
+use crate::{CONFIG, columns};
 
 /// Layout / columnizing / formatting constants.
 pub static LEVEL_WIDTH: usize = 8;
@@ -247,28 +246,25 @@ impl PrettyPrintable for &GenericJson {
             }
         }
 
-        let grid = term_grid::Grid::new(
-            cells,
-            GridOptions {
-                filling: Filling::Spaces(5),
-                direction: Direction::LeftToRight,
-                width: max_message_width,
-            },
-        );
+        // Write the columns, handling multi-line output with proper padding
+        if !cells.is_empty() {
+            let mut column_buffer = BytesMut::new();
+            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
 
-        let mut first_line = true;
-        for chunk in grid.to_string().split('\n') {
-            let trimmed = chunk.trim();
-            if !trimmed.is_empty() {
+            let column_output = String::from_utf8_lossy(&column_buffer);
+            let mut first_line = true;
+
+            for line in column_output.lines() {
                 if first_line {
-                    buffer.extend_from_slice(trimmed.as_bytes());
+                    buffer.extend_from_slice(line.as_bytes());
                     first_line = false;
                 } else {
+                    // Add padding for continuation lines
                     for _ in 0..padding {
                         buffer.extend_from_slice(b" ");
                     }
                     buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(trimmed.as_bytes());
+                    buffer.extend_from_slice(line.as_bytes());
                 }
                 buffer.extend_from_slice(b"\n");
             }
@@ -390,23 +386,19 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
             return buffer.len();
         }
 
-        let grid = term_grid::Grid::new(
-            cells,
-            GridOptions {
-                filling: Filling::Spaces(5),
-                direction: Direction::LeftToRight,
-                width: max_message_width,
-            },
-        );
-        for chunk in grid.to_string().split('\n') {
-            let trimmed = chunk.trim();
-            if !trimmed.is_empty() {
+        // Write the columns with proper padding for continuation lines
+        let mut column_buffer = BytesMut::new();
+        columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
+
+        let column_output = String::from_utf8_lossy(&column_buffer);
+        for line in column_output.lines() {
+            if !line.trim().is_empty() {
                 // Add padding
                 for _ in 0..padding {
                     buffer.extend_from_slice(b" ");
                 }
                 buffer.extend_from_slice(COL_SEP.as_bytes());
-                buffer.extend_from_slice(trimmed.as_bytes());
+                buffer.extend_from_slice(line.as_bytes());
                 buffer.extend_from_slice(b"\n");
             }
         }
@@ -626,25 +618,22 @@ impl<'a> PrettyPrintable for &Message<'a> {
             }
         }
 
-        // Now build our columns. I went for the lazy solution.
-        let grid = term_grid::Grid::new(
-            cells,
-            GridOptions {
-                filling: Filling::Spaces(5),
-                direction: Direction::LeftToRight,
-                width: max_message_width,
-            },
-        );
-        for chunk in grid.to_string().split('\n') {
-            let trimmed = chunk.trim();
-            if !trimmed.is_empty() {
-                // Add padding
-                for _ in 0..padding {
-                    buffer.extend_from_slice(b" ");
+        // Write the columns with proper padding for continuation lines
+        if !cells.is_empty() {
+            let mut column_buffer = BytesMut::new();
+            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
+
+            let column_output = String::from_utf8_lossy(&column_buffer);
+            for line in column_output.lines() {
+                if !line.trim().is_empty() {
+                    // Add padding
+                    for _ in 0..padding {
+                        buffer.extend_from_slice(b" ");
+                    }
+                    buffer.extend_from_slice(COL_SEP.as_bytes());
+                    buffer.extend_from_slice(line.as_bytes());
+                    buffer.extend_from_slice(b"\n");
                 }
-                buffer.extend_from_slice(COL_SEP.as_bytes());
-                buffer.extend_from_slice(trimmed.as_bytes());
-                buffer.extend_from_slice(b"\n");
             }
         }
 
@@ -687,7 +676,6 @@ mod tests {
         let error = serde_json::from_str::<Message<'_>>(logline);
         assert!(error.is_err());
     }
-
 
     #[test]
     fn complex_logline() {

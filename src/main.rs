@@ -1,6 +1,8 @@
 //! Pretty-print newline-delimited json (ndjson) logs.
 //! No more, no less.
 
+mod columns;
+
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
@@ -437,6 +439,7 @@ mod tests {
         let stringy = parsed.to_string();
         let lines: Vec<&str> = stringy.split('\n').collect();
         let length = lines.len();
-        assert_eq!(length, 5);
+
+        assert_eq!(length, 4);
     }
 }

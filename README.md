@@ -6,13 +6,11 @@ All I wanted was a newline-delimited json log pretty-printer, and they wouldn't 
 
 ```
 > tale --help
-A tool for pretty-printing json logs or any ndjson content that has a message, a level, and a
-timestamp.
+A tool for pretty-printing json logs or any ndjson content that streams to disk.
 
-The timestamp field may be named `time`, `ts`, or `timestamp`. The message field may be named
-`message` or `msg`. The tool has some opinions about ordering for fields commonly found in server
-log structures, but will print out every field that shows up in the log line, using the color theme
-you have set in your terminal.
+Tale gives special treatment to the fields that traditionally appear in server logs, such as log level, the text message itself, and the timestamp. It also recognizes log lines that contain the traditional canonical log fields and processes these efficiently, with concise displays.
+
+It's somewhat flexible about what the key fields are named. For example, it takes no side in the "message" vs "msg" wars. No matter what the fiels are, tale will print out every field that shows up in the log line, using the color theme you have set in your terminal.
 
 Usage: tale [OPTIONS] [ARGS]...
 
@@ -31,18 +29,15 @@ Options:
           Print version
 ```
 
-I have no plans to do any of the other `tail` options.
+I have no plans to do any of the other `tail` options. Uh. Other than multi-file tailing.
 
 ## Notes
 
-Tailing is not implemented yet.
+There is a moderately inefficient layout approach that uses [uutils_term_grid](https://github.com/uutils/uutils-term-grid) for the key/value pairs I don't have an opinion about, and some hand-tweaked formatting for the keys I do have an opinion about. If you are using a log format that looks a lot like canonical logs but in json, it's very efficient indeed.
 
-I'm going to have to completely rewrite layout to do it by hand instead of using an existing
-package, I think. I have too many opinions. (Columns are not the right paradigm.) Update: I have done this, but it's likely staggeringly inefficient in the first implementation.
+File reading is probably pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode.
 
-Its behavior is probably pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode.
-
-Consider [ripline](https://lib.rs/crates/ripline).
+I have [ripline](https://lib.rs/crates/ripline) in my back pocket for when I start tailing multiple files at once.
 
 ## LICENSE
 
