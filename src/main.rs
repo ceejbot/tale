@@ -26,14 +26,18 @@ static TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Parser)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
-/// A tool for pretty-printing json logs or any ndjson content that has
-/// a message, a level, and a timestamp.
+/// A tail-compatible tool for pretty-printing ndjson files, especially logs.
 ///
-/// The timestamp field may be named `time`, `ts`, or `timestamp`. The message
-/// field may be named `message` or `msg`. The tool has some opinions about
-/// ordering for fields commonly found in server log structures, but will print
-/// out every field that shows up in the log line, using the color theme you
-/// have set in your terminal.
+/// It displays the colorfully-formatted contents of FILE, by default stdin,
+/// to stdout. Tale highlights the fields likely to appear in log lines for
+/// servers, such as level or severity, the log message, timestamps, and so
+/// on. It also displays every field that shows up in the log line,  using
+/// the color theme you have set in your terminal.
+///
+/// Lines that are invalid json are printed intact, without formatting.
+///
+/// `tail` can also follow and display more than one file at a time, with
+/// header decoration options like `tail`'s.
 struct Args {
     /// Show timestamps, which are hidden by default.
     #[arg(short, long)]
@@ -41,9 +45,31 @@ struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long)]
     follow: bool,
+    /// Follow the file, also checking to see if has been renamed or has an new inode number.
+    /// If the file does not exist yet, wait and display it from the beginning if and
+    /// when it is created.
+    #[arg(short = 'F', long)]
+    sticky: bool,
+    /// Start tailing offset by N blocks.  Not yet respected.
+    #[arg(short, long)]
+    blocks: usize,
+    /// Start tailing offset by N bytes; e.g., to skip garbage.  Not yet respected.
+    #[arg(short = 'c', long)]
+    bytes: usize,
+    /// Start tailing offset by N lines. Not yet respected.
+    #[arg(short = 'n', long)]
+    offset: usize,
+    /// When following more than one file, show a header with the file name along
+    /// with every line from that file.  Not yet respected.
+    #[arg(short, long)]
+    verbose: bool,
+    /// Do not ever show file name headers when following more than one file.
+    #[arg(short, long)]
+    quiet: bool,
+
     /// Batch window size for multi-file tailing (in milliseconds).
     #[arg(long, default_value = "250")]
-    batch_window: u64,
+    window: u64,
     /// Arguments: [offset] [file] or [file1] [file2] ... for multi-file mode
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
@@ -414,7 +440,7 @@ async fn main() -> anyhow::Result<()> {
     let config = ConfigOpts {
         tailing: args.follow,
         show_time: args.timestamps,
-        batch_window_ms: args.batch_window,
+        batch_window_ms: args.window,
     };
     CONFIG
         .set(config)

@@ -1,9 +1,9 @@
 [package]
 name = "tale"
 version = "0.1.0"
-description = "Pretty-print ndjson log lines"
+description = "A tail-compatible tool for pretty-printing ndjson files, especially logs."
 categories = ["command-line-utilities", "text-processing"]
-keywords = ["ndjson", "pretty-print", "logging", "json"]
+keywords = ["ndjson", "pretty-print", "logging", "json", "tail"]
 authors = ["C J Silverio <ceejceej@gmail.com>"]
 edition = "2024"
 readme = "README.md"
