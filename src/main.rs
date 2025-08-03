@@ -58,10 +58,43 @@ struct ConfigOpts {
 
 static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
 
+/// Process a single line of input (JSON or plain text) and write to output.
+/// Returns true if we should increment the flush counter.
+#[inline]
+fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> anyhow::Result<()> {
+    match serde_json::from_str::<Printable>(line) {
+        Ok(message) => {
+            message.write(buffer);
+            outlock.write_all(buffer.chunk())?;
+            outlock.write_all(&[0x0a; 1])?; // blank line
+            buffer.clear();
+        }
+        Err(_) => {
+            outlock.write_all(line.as_bytes())?;
+            outlock.write_all(b"\n")?;
+        }
+    }
+    Ok(())
+}
+
+/// Strip trailing newline(s) to match BufReader::lines() behavior
+#[inline]
+fn strip_line_ending(line: &mut String) {
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            // Windows line endings are not handled well by Rust's line
+            // iterators, but we might as well try.
+            line.pop();
+        }
+    }
+}
+
 fn handle_stdin(tail: bool) -> anyhow::Result<()> {
     use std::time::{Duration, Instant};
 
-    let mut line = String::new();
+    // Pre-allocate based on typical log line length (~200-300 chars)
+    let mut line = String::with_capacity(512);
     let mut inlock = io::stdin().lock();
     let mut outlock = io::stdout().lock();
     let mut buffer = BytesMut::with_capacity(2048);
@@ -70,32 +103,13 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
 
     // Process initial input until EOF
     while inlock.read_line(&mut line)? != 0 {
-        // Strip trailing newline to match BufReader::lines() behavior
-        if line.ends_with('\n') {
-            line.pop();
-            if line.ends_with('\r') {
-                line.pop();
-            }
+        strip_line_ending(&mut line);
+        process_line(&line, &mut buffer, &mut outlock)?;
+        count += 1;
+        if count >= FLUSH_INTERVAL {
+            outlock.flush()?;
+            count = 0;
         }
-
-        match serde_json::from_str::<Printable>(line.as_str()) {
-            Ok(message) => {
-                message.write(&mut buffer);
-                outlock.write_all(buffer.chunk())?;
-                outlock.write_all(&[0x0a; 1])?; // blank line
-                if count >= FLUSH_INTERVAL {
-                    outlock.flush()?;
-                    count = 0;
-                }
-                count += 1;
-            }
-            Err(_) => {
-                writeln!(outlock, "{line}")?;
-                count = 0;
-                outlock.flush()?;
-            }
-        }
-        buffer.clear();
         line.clear();
     }
     outlock.flush()?;
@@ -104,6 +118,8 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // We flush at intervals when tailing, because we might wait a
+    // long time for more data.
     let mut last_flush = Instant::now();
 
     loop {
@@ -115,36 +131,14 @@ fn handle_stdin(tail: bool) -> anyhow::Result<()> {
                 continue;
             }
             _ => {
-                // Strip trailing newline to match BufReader::lines() behavior
-                // This is a clear signal that I need to refactor.
-                if line.ends_with('\n') {
-                    line.pop();
-                    // Windows line endings are probably hopeless, but…
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
+                strip_line_ending(&mut line);
+                // New data available - process it.
+                process_line(&line, &mut buffer, &mut outlock)?;
+                if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                    outlock.flush()?;
+                    last_flush = Instant::now();
                 }
 
-                // New data available
-                match serde_json::from_str::<Printable>(line.as_str()) {
-                    Ok(message) => {
-                        message.write(&mut buffer);
-                        outlock.write_all(buffer.chunk())?;
-                        outlock.write_all(&[0x0a; 1])?; // blank line
-
-                        // Flush immediately in tailing mode or after time interval
-                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                            outlock.flush()?;
-                            last_flush = Instant::now();
-                        }
-                    }
-                    Err(_) => {
-                        writeln!(outlock, "{line}")?;
-                        outlock.flush()?;
-                        last_flush = Instant::now();
-                    }
-                }
-                buffer.clear();
                 line.clear();
             }
         }
@@ -189,11 +183,9 @@ fn seek_backwards(file: &mut File, lines_from_end: u64) -> anyhow::Result<u64> {
             return Ok(0);
         }
 
-        // Seek to the beginning of this chunk
+        // Read a chonk. Chunk. Whatever.
         pos -= chunk_size as u64;
         file.seek(io::SeekFrom::Start(pos))?;
-
-        // Read the chunk
         file.read_exact(&mut buffer[..chunk_size])?;
 
         // Count newlines in reverse order
@@ -255,35 +247,23 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     // Now at last we get to start printing. What a fuss.
     let mut outlock = io::stdout().lock();
     let mut buffer = BytesMut::with_capacity(2048);
+    let mut line = String::with_capacity(1024);
     const FLUSH_INTERVAL: u8 = 40;
 
     let mut count: u8 = 0;
-    for maybe_line in (&mut reader).lines() {
-        let Ok(line) = maybe_line else {
-            break;
-        };
-        match serde_json::from_str::<Printable>(&line) {
-            Ok(message) => {
-                message.write(&mut buffer);
-                outlock.write_all(buffer.chunk())?;
-                outlock.write_all(&[0x0a; 1])?; // blank line
-                if count >= FLUSH_INTERVAL {
-                    outlock.flush()?;
-                    count = 0;
-                }
-                count += 1;
-            }
-            Err(_) => {
-                writeln!(outlock, "{line}")?;
-                count = 0;
-                outlock.flush()?;
-            }
+    while (&mut reader).read_line(&mut line)? != 0 {
+        strip_line_ending(&mut line);
+        process_line(&line, &mut buffer, &mut outlock)?;
+        count += 1;
+        if count >= FLUSH_INTERVAL {
+            outlock.flush()?;
+            count = 0;
         }
-        buffer.clear();
+        line.clear();
     }
     outlock.flush()?;
 
-    if !CONFIG.get().is_some_and(|v| v.tailing) {
+    if !tailing {
         return Ok(());
     }
 
@@ -304,29 +284,23 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
             file.seek(io::SeekFrom::Start(file_position))?;
             let mut tail_reader = BufReader::new(&file);
 
-            for maybe_line in (&mut tail_reader).lines() {
-                let Ok(line) = maybe_line else {
-                    break;
-                };
-
-                match serde_json::from_str::<Printable>(&line) {
-                    Ok(message) => {
-                        message.write(&mut buffer);
-                        outlock.write_all(buffer.chunk())?;
-                        outlock.write_all(&[0x0a; 1])?; // blank line
-
-                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                            outlock.flush()?;
-                            last_flush = Instant::now();
-                        }
-                    }
-                    Err(_) => {
-                        writeln!(outlock, "{line}")?;
+            match tail_reader.read_line(&mut line)? {
+                0 => {
+                    // EOF - no new data available, continue polling
+                    continue;
+                }
+                _ => {
+                    strip_line_ending(&mut line);
+                    // New data available - process it.
+                    process_line(&line, &mut buffer, &mut outlock)?;
+                    if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
                         outlock.flush()?;
                         last_flush = Instant::now();
                     }
+
+                    line.clear();
+                    buffer.clear();
                 }
-                buffer.clear();
             }
 
             // Note where we finished reading so we can figure out if we get more.
