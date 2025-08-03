@@ -19,8 +19,8 @@ pub static LEVEL_WIDTH: usize = 8;
 pub static MODULE_WIDTH: usize = 20;
 pub static COL_SEP: &str = " > ";
 
-/// Pre-compiled ANSI escape sequences for log levels (right-aligned to LEVEL_WIDTH)
-/// Format: bright_blue + bold + right-aligned text + reset
+/// Pre-compiled ANSI escape sequences for log levels (right-aligned to
+/// LEVEL_WIDTH) Format: bright_blue + bold + right-aligned text + reset
 static LEVEL_TRACE: &[u8] = b"\x1b[94m\x1b[1m   TRACE\x1b[0m\x1b[39m";
 static LEVEL_DEBUG: &[u8] = b"\x1b[94m\x1b[1m   DEBUG\x1b[0m\x1b[39m";
 static LEVEL_INFO: &[u8] = b"\x1b[94m\x1b[1m    INFO\x1b[0m\x1b[39m";
@@ -29,6 +29,10 @@ static LEVEL_ERROR: &[u8] = b"\x1b[94m\x1b[1m   ERROR\x1b[0m\x1b[39m";
 static LEVEL_FATAL: &[u8] = b"\x1b[94m\x1b[1m   FATAL\x1b[0m\x1b[39m";
 static LEVEL_CRITICAL: &[u8] = b"\x1b[94m\x1b[1mCRITICAL\x1b[0m\x1b[39m";
 static JSON_HEADER: &[u8] = b"\x1b[94m\x1b[1m    json\x1b[0m\x1b[39m";
+
+/// Pre-compiled ANSI escape sequences for timestamp formatting
+static TIMESTAMP_START: &[u8] = b"\x1b[94m"; // blue color
+static TIMESTAMP_END: &[u8] = b"\x1b[39m"; // reset to default color
 
 /// Get pre-compiled ANSI bytes for a log level, with fallback formatting
 fn get_level_bytes(level: &str) -> &'static [u8] {
@@ -42,6 +46,29 @@ fn get_level_bytes(level: &str) -> &'static [u8] {
         "CRITICAL" | "CRIT" => LEVEL_CRITICAL,
         _ => LEVEL_INFO, // Default fallback
     }
+}
+
+/// Write a formatted timestamp directly to buffer with blue coloring and
+/// left-padding Format: blue timestamp + reset + padding to MODULE_WIDTH +
+/// COL_SEP
+fn write_timestamp_column(buffer: &mut BytesMut, timestamp: &jiff::Timestamp) {
+    let timestamp_str = timestamp.strftime("%F-%T").to_string();
+
+    // Write: blue_start + timestamp + blue_end + padding + separator
+    buffer.extend_from_slice(TIMESTAMP_START);
+    buffer.extend_from_slice(timestamp_str.as_bytes());
+    buffer.extend_from_slice(TIMESTAMP_END);
+
+    // Calculate padding needed to reach MODULE_WIDTH
+    let timestamp_len = timestamp_str.len(); // 19 chars for "%F-%T" format
+    if timestamp_len < MODULE_WIDTH {
+        let padding_needed = MODULE_WIDTH - timestamp_len;
+        for _ in 0..padding_needed {
+            buffer.extend_from_slice(b" ");
+        }
+    }
+
+    buffer.extend_from_slice(COL_SEP.as_bytes());
 }
 
 pub fn colorize_json_value(value: &serde_json::Value) -> String {
@@ -95,7 +122,7 @@ pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
 
 /// All log messages get formatted the same way. Extracted out of
 /// the original message formatter.
-fn format_message<'a>(message: &Cow<'a, str>, buffer: &mut BytesMut, padding: usize, max_message_width: usize) {
+fn format_message(message: &str, buffer: &mut BytesMut, padding: usize, max_message_width: usize) {
     if message.contains('\n') {
         // This log message has newlines in it, like a stacktrace.
         // We're not going to rewrap it, but instead use the lines as-is.
@@ -119,7 +146,7 @@ fn format_message<'a>(message: &Cow<'a, str>, buffer: &mut BytesMut, padding: us
             buffer.extend_from_slice(message.as_bytes());
             buffer.extend_from_slice(b"\n");
         } else {
-            let chunks = textwrap::wrap(&message, max_message_width);
+            let chunks = textwrap::wrap(message, max_message_width);
             let mut first = true;
             for chunk in chunks {
                 if first {
@@ -156,16 +183,16 @@ where
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged, bound(deserialize = "'de: 'a"))]
 pub enum Printable<'a> {
-    Canonical(Canonical<'a>),
-    Message(Message<'a>),
+    Canonical(Box<Canonical<'a>>),
+    Message(Box<Message<'a>>),
     Json(GenericJson),
 }
 
 impl<'a> PrettyPrintable for Printable<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
         match self {
-            Printable::Canonical(canonical) => canonical.write(buffer),
-            Printable::Message(message) => message.write(buffer),
+            Printable::Canonical(canonical) => canonical.as_ref().write(buffer),
+            Printable::Message(message) => message.as_ref().write(buffer),
             Printable::Json(generic) => generic.write(buffer),
         }
     }
@@ -294,9 +321,7 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         buffer.extend_from_slice(get_level_bytes(&self.level));
         if show_time {
             buffer.extend_from_slice(b" ");
-            let timestamp_str = self.timestamp.strftime("%F-%T");
-            let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", timestamp_str.blue());
-            buffer.extend_from_slice(formatted.as_bytes());
+            write_timestamp_column(buffer, &self.timestamp);
         } else {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
@@ -506,9 +531,7 @@ impl<'a> PrettyPrintable for &Message<'a> {
             if let Some(ref v) = self.timestamp {
                 // Add space + formatted timestamp + separator
                 buffer.extend_from_slice(b" ");
-                let timestamp_str = v.strftime("%F-%T");
-                let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", timestamp_str.blue());
-                buffer.extend_from_slice(formatted.as_bytes());
+                write_timestamp_column(buffer, v);
             } else if let Some(ref v) = self.request_id {
                 // Add space + formatted request_id (no separator yet)
                 buffer.extend_from_slice(b" ");
@@ -664,6 +687,7 @@ mod tests {
         let error = serde_json::from_str::<Message<'_>>(logline);
         assert!(error.is_err());
     }
+
 
     #[test]
     fn complex_logline() {

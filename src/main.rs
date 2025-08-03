@@ -250,7 +250,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     const FLUSH_INTERVAL: u8 = 40;
 
     let mut count: u8 = 0;
-    while (&mut reader).read_line(&mut line)? != 0 {
+    while reader.read_line(&mut line)? != 0 {
         strip_line_ending(&mut line);
         process_line(&line, &mut buffer, &mut outlock)?;
         count += 1;
