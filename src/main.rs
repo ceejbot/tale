@@ -59,7 +59,6 @@ struct ConfigOpts {
 static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
 
 /// Process a single line of input (JSON or plain text) and write to output.
-/// Returns true if we should increment the flush counter.
 #[inline]
 fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> anyhow::Result<()> {
     match serde_json::from_str::<Printable<'_>>(line) {

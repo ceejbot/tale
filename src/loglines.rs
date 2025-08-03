@@ -4,7 +4,8 @@ use std::borrow::Cow;
 use std::fmt::Display;
 
 use ansi_width::ansi_width;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
+use humansize::{BINARY, format_size};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,6 +13,36 @@ use term_grid::{Direction, Filling, GridOptions};
 use textwrap::termwidth;
 
 use crate::CONFIG;
+
+/// Layout / columnizing / formatting constants.
+pub static LEVEL_WIDTH: usize = 8;
+pub static MODULE_WIDTH: usize = 20;
+pub static COL_SEP: &str = " > ";
+
+/// Pre-compiled ANSI escape sequences for log levels (right-aligned to LEVEL_WIDTH)
+/// Format: bright_blue + bold + right-aligned text + reset
+static LEVEL_TRACE: &[u8] = b"\x1b[94m\x1b[1m   TRACE\x1b[0m\x1b[39m";
+static LEVEL_DEBUG: &[u8] = b"\x1b[94m\x1b[1m   DEBUG\x1b[0m\x1b[39m";
+static LEVEL_INFO: &[u8] = b"\x1b[94m\x1b[1m    INFO\x1b[0m\x1b[39m";
+static LEVEL_WARN: &[u8] = b"\x1b[94m\x1b[1m    WARN\x1b[0m\x1b[39m";
+static LEVEL_ERROR: &[u8] = b"\x1b[94m\x1b[1m   ERROR\x1b[0m\x1b[39m";
+static LEVEL_FATAL: &[u8] = b"\x1b[94m\x1b[1m   FATAL\x1b[0m\x1b[39m";
+static LEVEL_CRITICAL: &[u8] = b"\x1b[94m\x1b[1mCRITICAL\x1b[0m\x1b[39m";
+static JSON_HEADER: &[u8] = b"\x1b[94m\x1b[1m    json\x1b[0m\x1b[39m";
+
+/// Get pre-compiled ANSI bytes for a log level, with fallback formatting
+fn get_level_bytes(level: &str) -> &'static [u8] {
+    match level.to_uppercase().as_str() {
+        "TRACE" => LEVEL_TRACE,
+        "DEBUG" => LEVEL_DEBUG,
+        "INFO" => LEVEL_INFO,
+        "WARN" | "WARNING" => LEVEL_WARN,
+        "ERROR" => LEVEL_ERROR,
+        "FATAL" => LEVEL_FATAL,
+        "CRITICAL" | "CRIT" => LEVEL_CRITICAL,
+        _ => LEVEL_INFO, // Default fallback
+    }
+}
 
 pub fn colorize_json_value(value: &serde_json::Value) -> String {
     match value {
@@ -62,6 +93,53 @@ pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
     }
 }
 
+/// All log messages get formatted the same way. Extracted out of
+/// the original message formatter.
+fn format_message<'a>(message: &Cow<'a, str>, buffer: &mut BytesMut, padding: usize, max_message_width: usize) {
+    if message.contains('\n') {
+        // This log message has newlines in it, like a stacktrace.
+        // We're not going to rewrap it, but instead use the lines as-is.
+        let mut chunks = message.split('\n');
+        if let Some(next) = chunks.next() {
+            buffer.extend_from_slice(next.as_bytes());
+            buffer.extend_from_slice(b"\n");
+        }
+        for chunk in chunks {
+            // Add padding for continuation lines
+            for _ in 0..padding {
+                buffer.extend_from_slice(b" ");
+            }
+            buffer.extend_from_slice(COL_SEP.as_bytes());
+            buffer.extend_from_slice(chunk.as_bytes());
+            buffer.extend_from_slice(b"\n");
+        }
+    } else {
+        // a rough and ready check that probably works
+        if message.len() <= max_message_width {
+            buffer.extend_from_slice(message.as_bytes());
+            buffer.extend_from_slice(b"\n");
+        } else {
+            let chunks = textwrap::wrap(&message, max_message_width);
+            let mut first = true;
+            for chunk in chunks {
+                if first {
+                    buffer.extend_from_slice(chunk.trim().as_bytes());
+                    buffer.extend_from_slice(b"\n");
+                    first = false;
+                } else {
+                    // Add padding for continuation lines
+                    for _ in 0..padding {
+                        buffer.extend_from_slice(b" ");
+                    }
+                    buffer.extend_from_slice(COL_SEP.as_bytes());
+                    buffer.extend_from_slice(chunk.trim().as_bytes());
+                    buffer.extend_from_slice(b"\n");
+                }
+            }
+        }
+    }
+}
+
 /// If you can be pretty-printed, you write into a mutable byte buffer.
 /// We don't have any opinions about what you write; pretty is in the eye
 /// of the implementor.
@@ -78,6 +156,7 @@ where
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged, bound(deserialize = "'de: 'a"))]
 pub enum Printable<'a> {
+    Canonical(Canonical<'a>),
     Message(Message<'a>),
     Json(GenericJson),
 }
@@ -85,6 +164,7 @@ pub enum Printable<'a> {
 impl<'a> PrettyPrintable for Printable<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
         match self {
+            Printable::Canonical(canonical) => canonical.write(buffer),
             Printable::Message(message) => message.write(buffer),
             Printable::Json(generic) => generic.write(buffer),
         }
@@ -94,6 +174,7 @@ impl<'a> PrettyPrintable for Printable<'a> {
 impl<'a> Display for Printable<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Printable::Canonical(canonical) => canonical.fmt(f),
             Printable::Message(message) => message.fmt(f),
             Printable::Json(generic) => generic.fmt(f),
         }
@@ -113,17 +194,18 @@ impl PrettyPrintable for &GenericJson {
         let show_time = CONFIG.get().is_some_and(|v| v.show_time);
         let termwidth = termwidth();
         let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if CONFIG.get().is_some_and(|v| v.show_time) {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH + ansi_width(COL_SEP)
+        let padding = if show_time {
+            LEVEL_WIDTH + 1 + MODULE_WIDTH
         } else {
-            LEVEL_WIDTH + ansi_width(COL_SEP)
+            LEVEL_WIDTH
         };
 
-        let mut line = format!("{:>LEVEL_WIDTH$}", "json".bold().bright_blue());
+        buffer.extend_from_slice(JSON_HEADER);
         if show_time {
-            line = format!("{line} {:<MODULE_WIDTH$}{COL_SEP}", " ");
+            buffer.extend_from_slice(b"                    ");
+            buffer.extend_from_slice(COL_SEP.as_bytes());
         } else {
-            line = format!("{line}{COL_SEP}");
+            buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
         let mut cells: Vec<String> = Vec::new();
@@ -147,16 +229,21 @@ impl PrettyPrintable for &GenericJson {
             },
         );
 
+        let mut first_line = true;
         for chunk in grid.to_string().split('\n') {
             let trimmed = chunk.trim();
             if !trimmed.is_empty() {
-                if !line.is_empty() {
-                    line = format!("{line}{trimmed}");
+                if first_line {
+                    buffer.extend_from_slice(trimmed.as_bytes());
+                    first_line = false;
                 } else {
-                    line = format!("{COL_SEP:>padding$}{trimmed}");
+                    for _ in 0..padding {
+                        buffer.extend_from_slice(b" ");
+                    }
+                    buffer.extend_from_slice(COL_SEP.as_bytes());
+                    buffer.extend_from_slice(trimmed.as_bytes());
                 }
-                put_line(buffer, line.as_bytes());
-                line.clear();
+                buffer.extend_from_slice(b"\n");
             }
         }
 
@@ -165,6 +252,153 @@ impl PrettyPrintable for &GenericJson {
 }
 
 impl Display for GenericJson {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = BytesMut::with_capacity(2048);
+        self.write(&mut buffer);
+        buffer.utf8_chunks().try_for_each(|chunk| {
+            let c = chunk.valid();
+            write!(f, "{c}")
+        })
+    }
+}
+
+/// This is a possibly familiar format that we require conformance to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Canonical<'a> {
+    timestamp: jiff::Timestamp,
+    level: Cow<'a, str>,
+    message: Cow<'a, str>,
+    method: Cow<'a, str>,
+    url: Cow<'a, str>,
+    status: usize,
+    elapsed: Cow<'a, str>,
+    size: usize,
+    request_id: Cow<'a, str>,
+    remote_host: Cow<'a, str>,
+    user_agent: Cow<'a, str>,
+    #[serde(flatten)]
+    pub(crate) rest: serde_json::Value,
+}
+
+impl<'a> PrettyPrintable for &Canonical<'a> {
+    fn write(&self, buffer: &mut BytesMut) -> usize {
+        let show_time = CONFIG.get().is_some_and(|v| v.show_time);
+        let termwidth = termwidth();
+        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
+        let padding = if show_time {
+            LEVEL_WIDTH + 1 + MODULE_WIDTH
+        } else {
+            LEVEL_WIDTH
+        };
+
+        buffer.extend_from_slice(get_level_bytes(&self.level));
+        if show_time {
+            buffer.extend_from_slice(b" ");
+            let timestamp_str = self.timestamp.strftime("%F-%T");
+            let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", timestamp_str.blue());
+            buffer.extend_from_slice(formatted.as_bytes());
+        } else {
+            buffer.extend_from_slice(COL_SEP.as_bytes());
+        }
+
+        format_message(&self.message, buffer, padding, max_message_width);
+
+        for _ in 0..padding {
+            buffer.extend_from_slice(b" ");
+        }
+        buffer.extend_from_slice(COL_SEP.as_bytes());
+        let mut count = padding + 3;
+        buffer.extend_from_slice(self.request_id.bright_yellow().to_string().as_bytes());
+        buffer.extend_from_slice(b"  ");
+        count += self.request_id.len() + 2;
+        let mut formatted = format!("{} {} {}", self.method.blue(), self.url.blue(), self.status.blue());
+        buffer.extend_from_slice(formatted.as_bytes());
+        count += ansi_width(&formatted);
+        formatted.clear();
+
+        let sized = format_size(self.size, BINARY);
+        formatted = format!("  {}{}", "size=".dimmed(), sized.bright_magenta());
+        if count + ansi_width(&formatted) >= max_message_width {
+            start_new_line(buffer, padding);
+            count = padding + 3
+        }
+        buffer.extend_from_slice(formatted.as_bytes());
+        count += ansi_width(&formatted);
+
+        // tedious repetition but
+        formatted = format!("  {}{}", "elapsed=".dimmed(), self.elapsed.magenta());
+        if count + ansi_width(&formatted) >= max_message_width {
+            start_new_line(buffer, padding);
+            count = padding + 3
+        }
+        buffer.extend_from_slice(formatted.as_bytes());
+        count += ansi_width(&formatted);
+
+        formatted = format!("  {}{}", "remote_host=".dimmed(), self.remote_host.blue());
+        if count + ansi_width(&formatted) >= max_message_width {
+            start_new_line(buffer, padding);
+            count = padding + 3
+        }
+        buffer.extend_from_slice(formatted.as_bytes());
+        count += ansi_width(&formatted);
+
+        formatted = format!("  {}{}", "user_agent=".dimmed(), self.user_agent.green());
+        if count + ansi_width(&formatted) >= max_message_width {
+            start_new_line(buffer, padding);
+        }
+        buffer.extend_from_slice(formatted.as_bytes());
+
+        let mut cells = Vec::new();
+        match self.rest {
+            Value::Object(ref map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
+            }
+            _ => {
+                cells.push(colorize_map_entry("rest", &self.rest));
+            }
+        }
+
+        buffer.extend_from_slice(b"\n");
+        if cells.is_empty() {
+            return buffer.len();
+        }
+
+        let grid = term_grid::Grid::new(
+            cells,
+            GridOptions {
+                filling: Filling::Spaces(5),
+                direction: Direction::LeftToRight,
+                width: max_message_width,
+            },
+        );
+        for chunk in grid.to_string().split('\n') {
+            let trimmed = chunk.trim();
+            if !trimmed.is_empty() {
+                // Add padding
+                for _ in 0..padding {
+                    buffer.extend_from_slice(b" ");
+                }
+                buffer.extend_from_slice(COL_SEP.as_bytes());
+                buffer.extend_from_slice(trimmed.as_bytes());
+                buffer.extend_from_slice(b"\n");
+            }
+        }
+
+        buffer.len()
+    }
+}
+
+fn start_new_line(buffer: &mut BytesMut, padding: usize) {
+    buffer.extend_from_slice(b"\n");
+    for _ in 0..padding {
+        buffer.extend_from_slice(b" ");
+    }
+    buffer.extend_from_slice(COL_SEP.as_bytes());
+}
+
+impl<'a> Display for Canonical<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut buffer = BytesMut::with_capacity(2048);
         self.write(&mut buffer);
@@ -255,78 +489,43 @@ blank    timing / bytes?      > STATUS VERB URL if present
 
  */
 
-/// Layout / columnizing / formatting constants.
-pub static LEVEL_WIDTH: usize = 8;
-pub static MODULE_WIDTH: usize = 20;
-pub static IDEAL_COL_WIDTH: usize = 40;
-pub static COL_SEP: &str = " > ";
-
-/// Write a finished line and end it with a newline.
-fn put_line(buffer: &mut BytesMut, line: &[u8]) {
-    buffer.put_slice(line);
-    buffer.put_slice(&[0x0a; 1]);
-}
-
 impl<'a> PrettyPrintable for &Message<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
         let show_time = CONFIG.get().is_some_and(|v| v.show_time);
         let termwidth = termwidth();
         let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let min_message_width = std::cmp::min(max_message_width, IDEAL_COL_WIDTH);
-        let padding = if CONFIG.get().is_some_and(|v| v.show_time) {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH + ansi_width(COL_SEP)
+        let padding = if show_time {
+            LEVEL_WIDTH + 1 + MODULE_WIDTH
         } else {
-            LEVEL_WIDTH + ansi_width(COL_SEP)
+            LEVEL_WIDTH
         };
-
-        let mut line = format!("{:>LEVEL_WIDTH$}", self.level.bold().bright_blue());
+        // Let's get absurd! Who wants to alloc, anyway?
+        buffer.extend_from_slice(get_level_bytes(&self.level));
 
         if show_time {
             if let Some(ref v) = self.timestamp {
-                line = format!("{line} {:<MODULE_WIDTH$}{COL_SEP}", v.strftime("%F-%T").blue());
+                // Add space + formatted timestamp + separator
+                buffer.extend_from_slice(b" ");
+                let timestamp_str = v.strftime("%F-%T");
+                let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", timestamp_str.blue());
+                buffer.extend_from_slice(formatted.as_bytes());
             } else if let Some(ref v) = self.request_id {
-                line = format!("{line} {:<MODULE_WIDTH$}", v.bright_yellow());
+                // Add space + formatted request_id (no separator yet)
+                buffer.extend_from_slice(b" ");
+                let formatted = format!("{:<MODULE_WIDTH$}", v.bright_yellow());
+                buffer.extend_from_slice(formatted.as_bytes());
             } else {
-                line = format!("{line} {:<MODULE_WIDTH$}{COL_SEP}", " ");
+                // Add space + padding + separator
+                buffer.extend_from_slice(b" ");
+                let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", " ");
+                buffer.extend_from_slice(formatted.as_bytes());
             }
         } else {
-            line = format!("{line}{COL_SEP}");
+            // Just add the separator
+            buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
-        if self.message.contains('\n') {
-            // This log message has newlines in it, like a stacktrace.
-            // We're not going to rewrap it, but instead use the lines as-is.
-            let mut chunks = self.message.split('\n');
-            if let Some(next) = chunks.next() {
-                line = format!("{line}{next}");
-                put_line(buffer, line.as_bytes());
-            }
-            for chunk in chunks {
-                line = format!("{COL_SEP:>padding$}{chunk}");
-                put_line(buffer, line.as_bytes());
-            }
-        } else {
-            let chunks = textwrap::wrap(&self.message, max_message_width);
-            if chunks.len() == 1 {
-                // we pad it out to the min
-                line = format!("{line}{:<min_message_width$}", self.message.trim());
-                put_line(buffer, line.as_bytes());
-            } else {
-                let mut chunk_iter = chunks.iter();
-                if let Some(next) = chunk_iter.next() {
-                    line = format!("{line}{}", next.trim());
-                }
-                for chunk in chunk_iter {
-                    if ansi_width(chunk) + ansi_width(line.as_str()) < termwidth {
-                        line = format!("{line} {chunk}");
-                    } else {
-                        put_line(buffer, line.as_bytes());
-                        line = format!("{COL_SEP:>padding$}{chunk}");
-                    }
-                }
-                put_line(buffer, line.as_bytes());
-            }
-        }
+        format_message(&self.message, buffer, padding, max_message_width);
 
         // Now we walk through all the other fields, treating some specially,
         // building our list of cells somewhat inefficiently. We pad everything
@@ -416,8 +615,13 @@ impl<'a> PrettyPrintable for &Message<'a> {
         for chunk in grid.to_string().split('\n') {
             let trimmed = chunk.trim();
             if !trimmed.is_empty() {
-                line = format!("{COL_SEP:>padding$}{trimmed}");
-                put_line(buffer, line.as_bytes());
+                // Add padding
+                for _ in 0..padding {
+                    buffer.extend_from_slice(b" ");
+                }
+                buffer.extend_from_slice(COL_SEP.as_bytes());
+                buffer.extend_from_slice(trimmed.as_bytes());
+                buffer.extend_from_slice(b"\n");
             }
         }
 
@@ -459,5 +663,29 @@ mod tests {
         let logline = r#"Sometimes, I try to do things / And it just doesn't work out the way I want it to"#;
         let error = serde_json::from_str::<Message<'_>>(logline);
         assert!(error.is_err());
+    }
+
+    #[test]
+    fn complex_logline() {
+        let logline = r#"{
+            "timestamp": "2025-07-03T20:37:35.098873Z",
+            "level": "ERROR",
+            "message": "HTTP PATCH /api/auth/login",
+            "method": "PUT",
+            "url": "/api/users",
+            "status": 201,
+            "elapsed": "1326ms",
+            "size": 36159,
+            "request_id": "req_641656",
+            "remote_host": "10.0.191.79",
+            "user_agent": "Python-requests/2.28.1",
+            "user_id": 5491
+        }"#;
+        let parsed =
+            serde_json::from_str::<Printable<'_>>(logline).expect("the HTTP patch message is a valid log line");
+        let Printable::Canonical(canonical) = parsed else {
+            panic!("we expected a canonical log line")
+        };
+        assert_eq!(canonical.message, "HTTP PATCH /api/auth/login");
     }
 }
