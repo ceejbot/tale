@@ -62,7 +62,7 @@ static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
 /// Returns true if we should increment the flush counter.
 #[inline]
 fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> anyhow::Result<()> {
-    match serde_json::from_str::<Printable>(line) {
+    match serde_json::from_str::<Printable<'_>>(line) {
         Ok(message) => {
             message.write(buffer);
             outlock.write_all(buffer.chunk())?;
@@ -434,7 +434,7 @@ mod tests {
             "error_code": "ER_NO_SUCH_TABLE",
             "elapsed": "250ms"
         }"##;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
         let stringy = parsed.to_string();
         let lines: Vec<&str> = stringy.split('\n').collect();
         let length = lines.len();

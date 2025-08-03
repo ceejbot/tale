@@ -1,5 +1,6 @@
 //! Structures and traits for log lines.
 
+use std::borrow::Cow;
 use std::fmt::Display;
 
 use ansi_width::ansi_width;
@@ -75,13 +76,13 @@ where
 /// we decide are log lines with fields we recognize, and some that are just
 /// json we pretty-print. And then there's plain text.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum Printable {
-    Message(Message),
+#[serde(untagged, bound(deserialize = "'de: 'a"))]
+pub enum Printable<'a> {
+    Message(Message<'a>),
     Json(GenericJson),
 }
 
-impl PrettyPrintable for Printable {
+impl<'a> PrettyPrintable for Printable<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
         match self {
             Printable::Message(message) => message.write(buffer),
@@ -90,7 +91,7 @@ impl PrettyPrintable for Printable {
     }
 }
 
-impl Display for Printable {
+impl<'a> Display for Printable<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Printable::Message(message) => message.fmt(f),
@@ -179,39 +180,42 @@ impl Display for GenericJson {
 /// common log fields. The rest of the fields are mentioned only so we can print
 /// them in a controlled order. We do not demand that they be present.
 #[derive(Debug, Clone, Deserialize)]
-pub struct Message {
+pub struct Message<'a> {
     /// The time this message was logged.
     #[serde(alias = "time", alias = "ts")]
     pub(crate) timestamp: Option<jiff::Timestamp>,
     /// The string message part of the log line.
-    #[serde(alias = "msg")]
-    pub(crate) message: String,
+    #[serde(alias = "msg", borrow)]
+    pub(crate) message: Cow<'a, str>,
     /// Log level for this line.
-    #[serde(alias = "lvl", alias = "severity")]
-    pub(crate) level: String,
+    #[serde(alias = "lvl", alias = "severity", borrow)]
+    pub(crate) level: Cow<'a, str>,
     /// The source module where the log line originated.
-    #[serde(alias = "mod", alias = "lib")]
-    pub(crate) module: Option<String>,
+    #[serde(alias = "mod", alias = "lib", borrow)]
+    pub(crate) module: Option<Cow<'a, str>>,
     /// The file where the log line originated.
-    pub(crate) file: Option<String>,
+    #[serde(borrow)]
+    pub(crate) file: Option<Cow<'a, str>>,
     /// The line in the file where the log line originated.
     pub(crate) line: Option<usize>,
     /// A request id
-    #[serde(alias = "requestId")]
-    pub(crate) request_id: Option<String>,
+    #[serde(alias = "requestId", borrow)]
+    pub(crate) request_id: Option<Cow<'a, str>>,
     /// Remote host.
-    #[serde(alias = "hostname", alias = "remote_host")]
-    pub(crate) host: Option<String>,
+    #[serde(alias = "hostname", alias = "remote_host", borrow)]
+    pub(crate) host: Option<Cow<'a, str>>,
     /// http method
-    pub(crate) method: Option<String>,
+    #[serde(borrow)]
+    pub(crate) method: Option<Cow<'a, str>>,
     /// a url
-    pub(crate) url: Option<String>,
+    #[serde(borrow)]
+    pub(crate) url: Option<Cow<'a, str>>,
     /// http response status code
-    #[serde(alias = "statusCode", alias = "code")]
-    pub(crate) status: Option<String>,
+    #[serde(alias = "statusCode", alias = "code", borrow)]
+    pub(crate) status: Option<Cow<'a, str>>,
     /// elapsed time
-    #[serde(alias = "elapsed_ms", alias = "elapsed_time")]
-    pub(crate) elapsed: Option<String>,
+    #[serde(alias = "elapsed_ms", alias = "elapsed_time", borrow)]
+    pub(crate) elapsed: Option<Cow<'a, str>>,
     /// size of the written response
     #[serde(
         alias = "sent_bytes",
@@ -219,16 +223,17 @@ pub struct Message {
         alias = "written",
         alias = "bodylen",
         alias = "body",
-        alias = "size"
+        alias = "size",
+        borrow
     )]
-    pub(crate) size: Option<String>,
+    pub(crate) size: Option<Cow<'a, str>>,
     /// The unpredictable parts of the log line, which we'll handle more
     /// generically.
     #[serde(flatten)]
     pub(crate) rest: serde_json::Value,
 }
 
-impl Display for Message {
+impl<'a> Display for Message<'a> {
     // second verse, same as the first
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut buffer = BytesMut::with_capacity(2048);
@@ -262,7 +267,7 @@ fn put_line(buffer: &mut BytesMut, line: &[u8]) {
     buffer.put_slice(&[0x0a; 1]);
 }
 
-impl PrettyPrintable for &Message {
+impl<'a> PrettyPrintable for &Message<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
         let show_time = CONFIG.get().is_some_and(|v| v.show_time);
         let termwidth = termwidth();
@@ -301,7 +306,7 @@ impl PrettyPrintable for &Message {
                 put_line(buffer, line.as_bytes());
             }
         } else {
-            let chunks = textwrap::wrap(self.message.as_str(), max_message_width);
+            let chunks = textwrap::wrap(&self.message, max_message_width);
             if chunks.len() == 1 {
                 // we pad it out to the min
                 line = format!("{line}{:<min_message_width$}", self.message.trim());
@@ -431,26 +436,28 @@ mod tests {
             "timestamp": "2025-07-30T17:41-07:00",
             "level":"INFO",
             "message": "I'm not crazy you're the ones who are crazy"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
         assert_eq!(parsed.message, "I'm not crazy you're the ones who are crazy");
         let logline = r#"{"timestamp": "2025-07-30T17:41-07:00",
             "message":"I'm not crazy you're the ones who are crazy",
             "level":"WARN",
             "request_id":"institutionalized"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        assert_eq!(parsed.request_id, Some("institutionalized".to_string()));
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
+        let reqid = parsed.request_id.expect("the request_id should exist");
+        assert_eq!(reqid, "institutionalized");
         let logline = r#"{"ts": "2025-07-30T17:41-07:00",
             "msg":"I'm not crazy you're the ones who are crazy",
             "lvl":"CRITICAL",
             "requestId":"institutionalized"}"#;
-        let parsed = serde_json::from_str::<Message>(logline).expect("this is a valid log message");
-        assert_eq!(parsed.request_id, Some("institutionalized".to_string()));
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
+        let reqid = parsed.request_id.expect("the request_id should exist");
+        assert_eq!(reqid, "institutionalized");
     }
 
     #[test]
     fn not_loglines() {
         let logline = r#"Sometimes, I try to do things / And it just doesn't work out the way I want it to"#;
-        let error = serde_json::from_str::<Message>(logline);
+        let error = serde_json::from_str::<Message<'_>>(logline);
         assert!(error.is_err());
     }
 }
