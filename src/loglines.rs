@@ -33,6 +33,10 @@ static JSON_HEADER: &[u8] = b"\x1b[94m\x1b[1m    json\x1b[0m\x1b[39m";
 static TIMESTAMP_START: &[u8] = b"\x1b[94m"; // blue color
 static TIMESTAMP_END: &[u8] = b"\x1b[39m"; // reset to default color
 
+/// Pre-compiled ANSI escape sequences for request_id formatting
+static REQUEST_ID_START: &[u8] = b"\x1b[93m\x1b[1m"; // bright_yellow
+static REQUEST_ID_END: &[u8] = b"\x1b[0m\x1b[39m"; // reset
+
 /// Get pre-compiled ANSI bytes for a log level, with fallback formatting
 fn get_level_bytes(level: &str) -> &'static [u8] {
     match level.to_uppercase().as_str() {
@@ -67,6 +71,35 @@ fn write_timestamp_column(buffer: &mut BytesMut, timestamp: &jiff::Timestamp) {
         }
     }
 
+    buffer.extend_from_slice(COL_SEP.as_bytes());
+}
+
+/// Write a formatted request_id directly to buffer with bright_yellow coloring
+/// and left-padding Format: bright_yellow + request_id + reset + padding to
+/// MODULE_WIDTH + COL_SEP
+fn write_request_id_column(buffer: &mut BytesMut, request_id: &str) {
+    // Write: bright_yellow_start + request_id + reset + padding + separator
+    buffer.extend_from_slice(REQUEST_ID_START);
+    buffer.extend_from_slice(request_id.as_bytes());
+    buffer.extend_from_slice(REQUEST_ID_END);
+
+    // Calculate padding needed to reach MODULE_WIDTH
+    let request_id_len = request_id.len();
+    if request_id_len < MODULE_WIDTH {
+        let padding_needed = MODULE_WIDTH - request_id_len;
+        for _ in 0..padding_needed {
+            buffer.extend_from_slice(b" ");
+        }
+    }
+
+    buffer.extend_from_slice(COL_SEP.as_bytes());
+}
+
+/// Write empty module column with just padding and separator
+fn write_empty_module_column(buffer: &mut BytesMut) {
+    for _ in 0..MODULE_WIDTH {
+        buffer.extend_from_slice(b" ");
+    }
     buffer.extend_from_slice(COL_SEP.as_bytes());
 }
 
@@ -525,15 +558,13 @@ impl<'a> PrettyPrintable for &Message<'a> {
                 buffer.extend_from_slice(b" ");
                 write_timestamp_column(buffer, v);
             } else if let Some(ref v) = self.request_id {
-                // Add space + formatted request_id (no separator yet)
+                // Add space + formatted request_id + separator
                 buffer.extend_from_slice(b" ");
-                let formatted = format!("{:<MODULE_WIDTH$}", v.bright_yellow());
-                buffer.extend_from_slice(formatted.as_bytes());
+                write_request_id_column(buffer, v);
             } else {
                 // Add space + padding + separator
                 buffer.extend_from_slice(b" ");
-                let formatted = format!("{:<MODULE_WIDTH$}{COL_SEP}", " ");
-                buffer.extend_from_slice(formatted.as_bytes());
+                write_empty_module_column(buffer);
             }
         } else {
             // Just add the separator

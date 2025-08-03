@@ -1,7 +1,10 @@
 //! Pretty-print newline-delimited json (ndjson) logs.
 //! No more, no less.
 
+mod batch;
 mod columns;
+mod file_state;
+mod watcher;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
@@ -38,7 +41,10 @@ struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long)]
     follow: bool,
-    /// Arguments: [offset] [file] where offset can be -N, +N, or N
+    /// Batch window size for multi-file tailing (in milliseconds).
+    #[arg(long, default_value = "250")]
+    batch_window: u64,
+    /// Arguments: [offset] [file] or [file1] [file2] ... for multi-file mode
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
 }
@@ -56,9 +62,21 @@ fn v3_styles() -> Styles {
 struct ConfigOpts {
     tailing: bool,
     show_time: bool,
+    batch_window_ms: u64,
 }
 
 static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
+
+/// Operation modes for tale
+#[derive(Debug, Clone)]
+enum TaleMode {
+    /// Read from stdin
+    Stdin { offset: Option<i64> },
+    /// Read from a single file
+    SingleFile { path: PathBuf, offset: i64 },
+    /// Watch multiple files (async mode)
+    MultiFile { paths: Vec<PathBuf> },
+}
 
 /// Process a single line of input (JSON or plain text) and write to output.
 #[inline]
@@ -310,9 +328,40 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     }
 }
 
-fn parse_tail_args(args: Vec<String>) -> anyhow::Result<(Option<i64>, Option<PathBuf>)> {
+fn is_glob(maybe: &str) -> bool {
+    maybe.contains('?') || maybe.contains('*') || maybe.contains('[')
+}
+
+/// Amongst our list of files to tail we might have a glob pattern
+/// to expand. If so, we find matches. Otherwise, we add that path
+/// to our list directly.
+fn expand_globs(args: Vec<String>) -> anyhow::Result<Vec<PathBuf>> {
+    let mut all_paths = Vec::new();
+
+    for candidate in args {
+        if is_glob(candidate.as_str()) {
+            let pattern = glob::glob(&candidate)?;
+            for entry in pattern {
+                if let Ok(fpath) = entry {
+                    if fpath.is_file() {
+                        all_paths.push(fpath);
+                    }
+                }
+            }
+        } else {
+            let fpath = PathBuf::from(candidate);
+            if fpath.exists() && fpath.is_file() {
+                all_paths.push(fpath);
+            }
+        }
+    }
+    all_paths.sort();
+    Ok(all_paths)
+}
+
+fn parse_tail_args(args: Vec<String>, follow: bool) -> anyhow::Result<TaleMode> {
     match args.len() {
-        0 => Ok((None, None)), // stdin
+        0 => Ok(TaleMode::Stdin { offset: None }),
         1 => {
             let first = &args[0];
             if (first.starts_with('-') || first.starts_with('+'))
@@ -320,53 +369,211 @@ fn parse_tail_args(args: Vec<String>) -> anyhow::Result<(Option<i64>, Option<Pat
                 && let Ok(offset) = first.parse::<i64>()
             {
                 // It's a numeric offset like "-4" or "+4"
-                Ok((Some(offset), None)) // stdin with offset
+                Ok(TaleMode::Stdin { offset: Some(offset) })
             } else {
-                // It's a filename
-                Ok((None, Some(PathBuf::from(first))))
+                // It's a filename or a glob
+                let paths = expand_globs(vec![first.clone()])?;
+                if paths.len() == 1 {
+                    Ok(TaleMode::SingleFile {
+                        path: PathBuf::from(first),
+                        offset: 0,
+                    })
+                } else {
+                    Ok(TaleMode::MultiFile { paths })
+                }
             }
         }
         2 => {
-            let (offset_str, file_str) = (&args[0], &args[1]);
-            let offset = offset_str.parse::<i64>()?;
-            let file_path = PathBuf::from(file_str);
-            Ok((Some(offset), Some(file_path)))
+            let (first, second) = (&args[0], &args[1]);
+
+            // Check if first arg is an offset
+            if let Ok(offset) = first.parse::<i64>() {
+                // offset + single file
+                Ok(TaleMode::SingleFile {
+                    path: PathBuf::from(second),
+                    offset,
+                })
+            } else {
+                // Two file paths or globs: we're multifile for sure.
+                let paths = expand_globs(args)?;
+                Ok(TaleMode::MultiFile { paths })
+            }
         }
-        _ => Err(anyhow!("Too many arguments")),
+        _ => {
+            // More than two paths and/or globs.
+            let paths = expand_globs(args)?;
+            Ok(TaleMode::MultiFile { paths })
+        }
     }
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let config = ConfigOpts {
         tailing: args.follow,
         show_time: args.timestamps,
+        batch_window_ms: args.batch_window,
     };
     CONFIG
         .set(config)
         .expect("Quite improbably failed to set config OnceLock on process start.");
 
-    let (offset, file_path) = parse_tail_args(args.args)?;
+    let mode = parse_tail_args(args.args, args.follow)?;
 
-    match (offset, file_path) {
-        (None, None) => {
-            // No arguments: read from stdin
+    match mode {
+        TaleMode::Stdin { offset } => {
+            // Handle stdin with optional offset (offset not currently implemented for
+            // stdin)
             handle_stdin(args.follow)
         }
-        (Some(_offset), None) => {
-            // Offset only: read from stdin with offset (not really useful but supported)
-            handle_stdin(args.follow)
+        TaleMode::SingleFile { path, offset } => {
+            // Handle single file with offset
+            handle_file(path, offset)
         }
-        (None, Some(file_path)) => {
-            // File only: read entire file
-            handle_file(file_path, 0)
-        }
-        (Some(offset), Some(file_path)) => {
-            // Both offset and file: read file from offset
-            handle_file(file_path, offset)
+        TaleMode::MultiFile { paths } => {
+            if args.follow {
+                // Multi-file tailing mode
+                handle_multi_file_tailing(paths).await
+            } else {
+                // Multi-file static mode (read all files once)
+                handle_multi_file_static(paths)
+            }
         }
     }
+}
+
+/// Handle multi-file static mode (read all files once, no following)
+fn handle_multi_file_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
+    use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
+    use crate::file_state::FileStateManager;
+
+    let mut file_manager = FileStateManager::new();
+
+    // Add all files to the manager
+    for path in &paths {
+        file_manager.add_file(path)?;
+    }
+
+    // Read all lines from all files
+    let all_lines = file_manager.read_new_lines()?;
+
+    // Create batched lines with timestamps
+    let mut batched_lines = Vec::new();
+    for (file_path, lines) in all_lines {
+        for (line_num, line) in lines.into_iter().enumerate() {
+            let mut batched_line = BatchedLine::new(line, file_path.clone(), line_num as u64);
+            let _ = batched_line.parse(); // Parse to extract timestamp
+            batched_lines.push(batched_line);
+        }
+    }
+
+    // Sort by timestamp/received order
+    batched_lines.sort_by_key(|line| line.sort_key());
+
+    // Output the sorted lines
+    let mut outlock = io::stdout().lock();
+    let mut buffer = BytesMut::with_capacity(2048);
+
+    for batched_line in batched_lines {
+        process_line(&batched_line.content, &mut buffer, &mut outlock)?;
+    }
+
+    outlock.flush()?;
+    Ok(())
+}
+
+/// Handle multi-file tailing mode (watch for changes and follow)
+async fn handle_multi_file_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
+    use std::time::Duration;
+
+    use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
+    use crate::watcher::{WatchEvent, create_watcher};
+
+    // Create the file watcher
+    let mut watcher = create_watcher();
+
+    // Add files to watch
+    watcher.add_files(paths).await?;
+
+    // Create batch processor with configuration from CLI
+    let batch_config = BatchConfig {
+        batch_window: Duration::from_millis(CONFIG.get().unwrap().batch_window_ms),
+        max_batch_size: 1000,
+        max_buffer_memory: 10 * 1024 * 1024,
+    };
+    let mut batch_processor = create_processor_with_config(batch_config);
+
+    // Start the batch processor
+    let (line_sender, mut batch_receiver) = batch_processor.start().await?;
+
+    // Start watching files
+    let mut watch_events = watcher.watch().await?;
+
+    // Set up output
+    let mut outlock = io::stdout().lock();
+    let mut buffer = BytesMut::with_capacity(2048);
+
+    // Main coordination loop
+    loop {
+        tokio::select! {
+            // Handle file system events
+            watch_event = watch_events.recv() => {
+                match watch_event {
+                    Some(WatchEvent::FileModified(path)) => {
+                        // File was modified, read new lines
+                        if let Some(state) = watcher.file_manager_mut().get_state_mut(&path) {
+                            if let Ok(_changed) = state.refresh() {
+                                if let Ok(new_lines) = state.read_new_lines() {
+                                    // Send lines to batch processor
+                                    for (line_num, line) in new_lines.into_iter().enumerate() {
+                                        let batched_line = BatchedLine::new(
+                                            line,
+                                            path.clone(),
+                                            line_num as u64
+                                        );
+                                        if let Err(_) = line_sender.send(batched_line) {
+                                            return Err(anyhow!("Batch processor stopped"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(WatchEvent::Error(err)) => {
+                        eprintln!("Watch error: {}", err);
+                    }
+                    Some(_) => {
+                        // Other events (create, delete) - could handle these in future
+                    }
+                    None => {
+                        // Watcher stopped
+                        break;
+                    }
+                }
+            }
+
+            // Handle sorted batches from batch processor
+            batch = batch_receiver.recv() => {
+                match batch {
+                    Some(sorted_lines) => {
+                        // Output the sorted batch
+                        for batched_line in sorted_lines {
+                            process_line(&batched_line.content, &mut buffer, &mut outlock)?;
+                        }
+                        outlock.flush()?;
+                    }
+                    None => {
+                        // Batch processor stopped
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
