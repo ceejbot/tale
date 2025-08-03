@@ -22,19 +22,19 @@ pub fn colorize_json_value(value: &serde_json::Value) -> String {
             val.green().to_string()
         }
         Value::Array(values) => {
-            let valstrs: Vec<String> = values.iter().map(|xs| colorize_json_value(xs)).collect();
+            let valstrs: Vec<String> = values.iter().map(colorize_json_value).collect();
             valstrs.join(", ")
         }
         Value::Object(object) => {
             format!(
                 "{}{}{}",
-                "{ ".to_string(),
+                "{ ",
                 object
                     .iter()
                     .map(|(k, v)| colorize_map_entry(k, v))
                     .collect::<Vec<String>>()
                     .join(", "),
-                " }".to_string()
+                " }"
             )
         }
     }
@@ -52,7 +52,7 @@ pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
             format!("{}={}", key.dimmed(), val.green())
         }
         Value::Array(values) => {
-            let valstrs: Vec<String> = values.iter().map(|xs| colorize_json_value(xs)).collect();
+            let valstrs: Vec<String> = values.iter().map(colorize_json_value).collect();
             valstrs.join(", ")
         }
         Value::Object(_) => {
@@ -240,7 +240,6 @@ impl Display for Message {
     }
 }
 
-/// Layout / columnizing / formatting.
 /*
 
 CRITICAL module::thing::foobl > message here with rest of width
@@ -251,11 +250,13 @@ blank    timing / bytes?      > STATUS VERB URL if present
 
  */
 
+/// Layout / columnizing / formatting constants.
 pub static LEVEL_WIDTH: usize = 8;
 pub static MODULE_WIDTH: usize = 20;
 pub static IDEAL_COL_WIDTH: usize = 40;
 pub static COL_SEP: &str = " > ";
 
+/// Write a finished line and end it with a newline.
 fn put_line(buffer: &mut BytesMut, line: &[u8]) {
     buffer.put_slice(line);
     buffer.put_slice(&[0x0a; 1]);

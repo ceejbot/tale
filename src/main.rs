@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
@@ -14,6 +15,9 @@ use clap::builder::styling::AnsiColor;
 
 mod loglines;
 use loglines::*;
+
+/// How long we wait before flushing data to stdout when tailing.
+static TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Parser)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
@@ -55,28 +59,78 @@ struct ConfigOpts {
 static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
 
 fn handle_stdin(tail: bool) -> anyhow::Result<()> {
+    use std::time::{Duration, Instant};
+
     let mut line = String::new();
     let mut inlock = io::stdin().lock();
     let mut outlock = io::stdout().lock();
+    let mut buffer = BytesMut::with_capacity(2048);
+    const FLUSH_INTERVAL: u8 = 40;
+    let mut count: u8 = 0;
 
+    // Process initial input until EOF
     while inlock.read_line(&mut line)? != 0 {
         match serde_json::from_str::<Printable>(line.as_str()) {
             Ok(message) => {
-                writeln!(outlock, "{message}")?;
+                message.write(&mut buffer);
+                outlock.write_all(buffer.chunk())?;
+                outlock.write_all(&[0x0a; 1])?; // blank line
+                if count >= FLUSH_INTERVAL {
+                    outlock.flush()?;
+                    count = 0;
+                }
+                count += 1;
             }
             Err(_) => {
                 writeln!(outlock, "{line}")?;
+                count = 0;
+                outlock.flush()?;
             }
         }
+        buffer.clear();
         line.clear();
     }
+    outlock.flush()?;
+
     if !tail {
         return Ok(());
     }
 
-    // TODO if tailing, need to hang out and read more
+    let mut last_flush = Instant::now();
 
-    Ok(())
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+
+        match inlock.read_line(&mut line)? {
+            0 => {
+                // EOF - no new data available, continue polling
+                continue;
+            }
+            _ => {
+                // New data available
+                match serde_json::from_str::<Printable>(line.as_str()) {
+                    Ok(message) => {
+                        message.write(&mut buffer);
+                        outlock.write_all(buffer.chunk())?;
+                        outlock.write_all(&[0x0a; 1])?; // blank line
+
+                        // Flush immediately in tailing mode or after time interval
+                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                            outlock.flush()?;
+                            last_flush = Instant::now();
+                        }
+                    }
+                    Err(_) => {
+                        writeln!(outlock, "{line}")?;
+                        outlock.flush()?;
+                        last_flush = Instant::now();
+                    }
+                }
+                buffer.clear();
+                line.clear();
+            }
+        }
+    }
 }
 
 /// Find the byte offset from the beginning of the file for the start of the
@@ -171,13 +225,12 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         file.seek(io::SeekFrom::End(0))?;
     };
 
-    let reader = BufReader::new(file);
-    let mut by_lines = reader.lines();
+    let mut reader = BufReader::new(file);
 
     // If we've got a positive offset, we still need to skip our N lines
     if offset > 0 {
-        let consume_me = by_lines.by_ref().take(offset as usize);
-        // we then must consume them. this feels v inefficient but I do not know.
+        let consume_me = (&mut reader).lines().take(offset as usize);
+        // We then must consume them. this feels v inefficient but I do not know.
         let _count = consume_me.count();
     };
 
@@ -187,7 +240,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     const FLUSH_INTERVAL: u8 = 40;
 
     let mut count: u8 = 0;
-    for maybe_line in by_lines {
+    for maybe_line in (&mut reader).lines() {
         let Ok(line) = maybe_line else {
             break;
         };
@@ -216,9 +269,52 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // TODO if tailing, need to hang out and read more
+    // Now we tell a tale of tailing.
+    let mut last_flush = Instant::now();
 
-    Ok(())
+    // Get the file back from the reader
+    let mut file = reader.into_inner();
+    let mut file_position = file.stream_position()?;
+
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Check if file has grown
+        let current_size = file.seek(io::SeekFrom::End(0))?;
+        if current_size > file_position {
+            // Hide and seek, trains and sewing machines.
+            file.seek(io::SeekFrom::Start(file_position))?;
+            let mut tail_reader = BufReader::new(&file);
+
+            for maybe_line in (&mut tail_reader).lines() {
+                let Ok(line) = maybe_line else {
+                    break;
+                };
+
+                match serde_json::from_str::<Printable>(&line) {
+                    Ok(message) => {
+                        message.write(&mut buffer);
+                        outlock.write_all(buffer.chunk())?;
+                        outlock.write_all(&[0x0a; 1])?; // blank line
+
+                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                            outlock.flush()?;
+                            last_flush = Instant::now();
+                        }
+                    }
+                    Err(_) => {
+                        writeln!(outlock, "{line}")?;
+                        outlock.flush()?;
+                        last_flush = Instant::now();
+                    }
+                }
+                buffer.clear();
+            }
+
+            // Note where we finished reading so we can figure out if we get more.
+            file_position = file.stream_position()?;
+        }
+    }
 }
 
 fn parse_tail_args(args: Vec<String>) -> anyhow::Result<(Option<i64>, Option<PathBuf>)> {
