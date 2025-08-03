@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use textwrap::termwidth;
 
-use crate::{CONFIG, columns};
+use crate::{columns, config};
 
 /// Layout / columnizing / formatting constants.
 pub static LEVEL_WIDTH: usize = 8;
@@ -250,7 +250,7 @@ pub struct GenericJson {
 
 impl PrettyPrintable for &GenericJson {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = CONFIG.get().is_some_and(|v| v.show_time);
+        let show_time = config::show_time();
         let termwidth = termwidth();
         let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
         let padding = if show_time {
@@ -338,7 +338,7 @@ pub struct Canonical<'a> {
 
 impl<'a> PrettyPrintable for &Canonical<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = CONFIG.get().is_some_and(|v| v.show_time);
+        let show_time = config::show_time();
         let termwidth = termwidth();
         let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
         let padding = if show_time {
@@ -541,7 +541,7 @@ blank    timing / bytes?      > STATUS VERB URL if present
 
 impl<'a> PrettyPrintable for &Message<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = CONFIG.get().is_some_and(|v| v.show_time);
+        let show_time = config::show_time();
         let termwidth = termwidth();
         let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
         let padding = if show_time {

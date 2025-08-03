@@ -3,13 +3,14 @@
 
 mod batch;
 mod columns;
+mod config;
 mod file_state;
+mod loglines;
 mod watcher;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -17,9 +18,10 @@ use bytes::{Buf, BytesMut};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
-
-mod loglines;
+use config::{ConfigOpts, config};
 use loglines::*;
+
+use crate::config::InputMode;
 
 /// How long we wait before flushing data to stdout when tailing.
 static TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
@@ -45,32 +47,33 @@ struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long)]
     follow: bool,
-    /// Follow the file, also checking to see if has been renamed or has an new inode number.
-    /// If the file does not exist yet, wait and display it from the beginning if and
-    /// when it is created.
+    /// Follow the file, also checking to see if has been renamed or has an new
+    /// inode number. If the file does not exist yet, wait and display it
+    /// from the beginning if and when it is created.
     #[arg(short = 'F', long)]
     sticky: bool,
     /// Start tailing offset by N blocks.  Not yet respected.
-    #[arg(short, long)]
-    blocks: usize,
-    /// Start tailing offset by N bytes; e.g., to skip garbage.  Not yet respected.
-    #[arg(short = 'c', long)]
-    bytes: usize,
+    #[arg(short, long, group = "units")]
+    blocks: Option<i64>,
+    /// Start tailing offset by N bytes; e.g., to skip garbage.  Not yet
+    /// respected.
+    #[arg(short = 'c', long, group = "units")]
+    bytes: Option<i64>,
     /// Start tailing offset by N lines. Not yet respected.
-    #[arg(short = 'n', long)]
-    offset: usize,
-    /// When following more than one file, show a header with the file name along
-    /// with every line from that file.  Not yet respected.
+    #[arg(short = 'n', long, group = "units")]
+    offset: Option<i64>,
+    /// When following more than one file, show a header with the file name
+    /// along with every line from that file.  Not yet respected.
     #[arg(short, long)]
     verbose: bool,
     /// Do not ever show file name headers when following more than one file.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "verbose")]
     quiet: bool,
 
     /// Batch window size for multi-file tailing (in milliseconds).
     #[arg(long, default_value = "250")]
     window: u64,
-    /// Arguments: [offset] [file] or [file1] [file2] ... for multi-file mode
+    /// Arguments: (offset) [file ...] where offset can be +N, -N, or N.
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
 }
@@ -82,26 +85,6 @@ fn v3_styles() -> Styles {
         .usage(AnsiColor::Green.on_default())
         .literal(AnsiColor::Green.on_default())
         .placeholder(AnsiColor::Green.on_default())
-}
-
-#[derive(Debug, Clone, Default)]
-struct ConfigOpts {
-    tailing: bool,
-    show_time: bool,
-    batch_window_ms: u64,
-}
-
-static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
-
-/// Operation modes for tale
-#[derive(Debug, Clone)]
-enum TaleMode {
-    /// Read from stdin
-    Stdin { offset: Option<i64> },
-    /// Read from a single file
-    SingleFile { path: PathBuf, offset: i64 },
-    /// Watch multiple files (async mode)
-    MultiFile { paths: Vec<PathBuf> },
 }
 
 /// Process a single line of input (JSON or plain text) and write to output.
@@ -252,7 +235,7 @@ fn seek_backwards(file: &mut File, lines_from_end: u64) -> anyhow::Result<u64> {
     }
 }
 
-fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
+fn handle_file(fpath: &PathBuf, offset: i64) -> anyhow::Result<()> {
     use std::io::Seek;
 
     if !fpath.exists() {
@@ -262,7 +245,7 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
         return Err(anyhow!("{} is not a file!", fpath.display()));
     }
 
-    let tailing = CONFIG.get().is_some_and(|v| v.tailing);
+    let tailing = config::tailing();
 
     let mut file = File::open(&fpath)?;
 
@@ -354,117 +337,32 @@ fn handle_file(fpath: PathBuf, offset: i64) -> anyhow::Result<()> {
     }
 }
 
-fn is_glob(maybe: &str) -> bool {
-    maybe.contains('?') || maybe.contains('*') || maybe.contains('[')
-}
-
-/// Amongst our list of files to tail we might have a glob pattern
-/// to expand. If so, we find matches. Otherwise, we add that path
-/// to our list directly.
-fn expand_globs(args: Vec<String>) -> anyhow::Result<Vec<PathBuf>> {
-    let mut all_paths = Vec::new();
-
-    for candidate in args {
-        if is_glob(candidate.as_str()) {
-            let pattern = glob::glob(&candidate)?;
-            for entry in pattern {
-                if let Ok(fpath) = entry {
-                    if fpath.is_file() {
-                        all_paths.push(fpath);
-                    }
-                }
-            }
-        } else {
-            let fpath = PathBuf::from(candidate);
-            if fpath.exists() && fpath.is_file() {
-                all_paths.push(fpath);
-            }
-        }
-    }
-    all_paths.sort();
-    Ok(all_paths)
-}
-
-fn parse_tail_args(args: Vec<String>, follow: bool) -> anyhow::Result<TaleMode> {
-    match args.len() {
-        0 => Ok(TaleMode::Stdin { offset: None }),
-        1 => {
-            let first = &args[0];
-            if (first.starts_with('-') || first.starts_with('+'))
-                && first.len() > 1
-                && let Ok(offset) = first.parse::<i64>()
-            {
-                // It's a numeric offset like "-4" or "+4"
-                Ok(TaleMode::Stdin { offset: Some(offset) })
-            } else {
-                // It's a filename or a glob
-                let paths = expand_globs(vec![first.clone()])?;
-                if paths.len() == 1 {
-                    Ok(TaleMode::SingleFile {
-                        path: PathBuf::from(first),
-                        offset: 0,
-                    })
-                } else {
-                    Ok(TaleMode::MultiFile { paths })
-                }
-            }
-        }
-        2 => {
-            let (first, second) = (&args[0], &args[1]);
-
-            // Check if first arg is an offset
-            if let Ok(offset) = first.parse::<i64>() {
-                // offset + single file
-                Ok(TaleMode::SingleFile {
-                    path: PathBuf::from(second),
-                    offset,
-                })
-            } else {
-                // Two file paths or globs: we're multifile for sure.
-                let paths = expand_globs(args)?;
-                Ok(TaleMode::MultiFile { paths })
-            }
-        }
-        _ => {
-            // More than two paths and/or globs.
-            let paths = expand_globs(args)?;
-            Ok(TaleMode::MultiFile { paths })
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let config = ConfigOpts {
-        tailing: args.follow,
-        show_time: args.timestamps,
-        batch_window_ms: args.window,
-    };
-    CONFIG
-        .set(config)
-        .expect("Quite improbably failed to set config OnceLock on process start.");
-
-    let mode = parse_tail_args(args.args, args.follow)?;
+    let config = ConfigOpts::new(&args);
+    config::set(config).expect("Quite improbably failed to set config OnceLock on process start.");
+    let mode = config::mode();
+    let offset = config::offset();
 
     match mode {
-        TaleMode::Stdin { offset } => {
+        InputMode::Stdin { .. } => {
             // Handle stdin with optional offset (offset not currently implemented for
             // stdin)
             handle_stdin(args.follow)
         }
-        TaleMode::SingleFile { path, offset } => {
+        InputMode::SingleFile { path } => {
             // Handle single file with offset
             handle_file(path, offset)
         }
-        TaleMode::MultiFile { paths } => {
+        InputMode::MultiFile { paths } => {
             if args.follow {
                 // Multi-file tailing mode
-                handle_multi_file_tailing(paths).await
+                handle_multi_file_tailing(paths.to_vec()).await
             } else {
                 // Multi-file static mode (read all files once)
-                handle_multi_file_static(paths)
+                handle_multi_file_static(paths.to_vec())
             }
         }
     }
@@ -525,7 +423,7 @@ async fn handle_multi_file_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
 
     // Create batch processor with configuration from CLI
     let batch_config = BatchConfig {
-        batch_window: Duration::from_millis(CONFIG.get().unwrap().batch_window_ms),
+        batch_window: Duration::from_millis(config::batch_window_ms()),
         max_batch_size: 1000,
         max_buffer_memory: 10 * 1024 * 1024,
     };
@@ -660,6 +558,8 @@ mod tests {
 
     #[test]
     fn layout_one() {
+        config::set(ConfigOpts::default()).expect("tests should successfully set config");
+
         let logline = r##"{
             "timestamp": "2025-08-01T10:45:03Z",
             "level": "CRITICAL",

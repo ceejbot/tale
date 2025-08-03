@@ -79,23 +79,33 @@ impl FileState {
         let old_inode = self.inode;
         let old_size = self.size;
 
-        // Update state
-        self.available = metadata.is_file();
-        self.size = new_size;
-        self.inode = new_inode;
+        // We only want to switch to the new inode if the `sticky` option was set, aka
+        // -F. If it's set, we open the new file at our followed path.
+        // Otherwise, we keep following the inode we were following before,
+        // under whatever its new name is.
+        let file_rotated = if old_inode.is_some() && new_inode != old_inode {
+            if crate::config::sticky() {
+                self.inode = new_inode;
+                self.position = 0;
+                // The metadata we just read applies to the new inode we're following.
+                self.available = metadata.is_file();
+                self.size = new_size;
 
-        // If the inode changed, the file rotated. This one feature might be
-        // worth the price of admission, tbh.
-        let file_rotated = old_inode.is_some() && self.inode != old_inode;
-        if file_rotated {
-            // When you read, you begin with A B C
-            self.position = 0;
-        }
+                true
+            } else {
+                // I *think* the right behavior here is to close us on out?
+                self.available = false;
+                self.size = 0;
+                self.inode = None;
+                true
+            }
+        } else {
+            // no changes
+            false
+        };
 
-        // Changes include such changes as:
-        // - availability
-        // - rotation
-        // - size change because of new data arriving
+        // Changes include such changes as: availability, rotation, size change, an
+        // almost fanati--
         let changed = was_available != self.available || file_rotated || (self.available && new_size > old_size);
 
         Ok(changed)
@@ -176,7 +186,8 @@ impl FileStateManager {
         Ok(())
     }
 
-    /// Add a file to be tracked, starting from the end. No offsets for MULTIBALL.
+    /// Add a file to be tracked, starting from the end. No offsets for
+    /// MULTIBALL.
     pub fn add_file_for_tailing<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref().to_path_buf();
         let mut state = FileState::new_and_refresh(path.clone())?;
