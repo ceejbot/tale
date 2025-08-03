@@ -2,3 +2,6 @@
 .zed
 /dist
 .claude
+
+# Benchmark test files (large)
+/fixtures/benchmarks/*.log
