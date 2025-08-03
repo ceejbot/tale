@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::fmt::Display;
+use std::path::PathBuf;
 
 use ansi_width::ansi_width;
 use bytes::BytesMut;
@@ -207,6 +208,40 @@ where
     Self: Display,
 {
     fn write(&self, buffer: &mut BytesMut) -> usize;
+    fn cells(&self) -> Vec<String>;
+}
+
+fn write_rest<T>(line: T, buffer: &mut BytesMut, max_message_width: usize, padding: usize) -> usize
+where
+    T: PrettyPrintable,
+{
+    let cells = line.cells();
+
+    // Write the columns, handling multi-line output with proper padding
+    if !cells.is_empty() {
+        let mut column_buffer = BytesMut::new();
+        columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
+
+        let column_output = String::from_utf8_lossy(&column_buffer);
+        let mut first_line = true;
+
+        for line in column_output.lines() {
+            if first_line {
+                buffer.extend_from_slice(line.as_bytes());
+                first_line = false;
+            } else {
+                // Add padding for continuation lines
+                for _ in 0..padding {
+                    buffer.extend_from_slice(b" ");
+                }
+                buffer.extend_from_slice(COL_SEP.as_bytes());
+                buffer.extend_from_slice(line.as_bytes());
+            }
+            buffer.extend_from_slice(b"\n");
+        }
+    }
+
+    buffer.len()
 }
 
 /// An enum to help serde deserialize incoming log lines. There are some
@@ -217,7 +252,127 @@ where
 pub enum Printable<'a> {
     Canonical(Box<Canonical<'a>>),
     Message(Box<Message<'a>>),
+    TimeOnly(Timestamped),
     Json(GenericJson),
+}
+
+/// A wrapper that combines a parsed log line with source file metadata.
+/// This is used for multi-file processing to track which file each line came
+/// from.
+#[derive(Debug, Clone)]
+pub struct SourcedLine<'a> {
+    /// The parsed log line
+    pub parsed: Printable<'a>,
+    /// The source file path
+    pub source_file: PathBuf,
+    /// Line number within the source file (0-based)
+    pub line_number: u64,
+}
+
+impl<'a> SourcedLine<'a> {
+    /// Create a new SourcedLine
+    pub fn new(parsed: Printable<'a>, source_file: PathBuf, line_number: u64) -> Self {
+        Self {
+            parsed,
+            source_file,
+            line_number,
+        }
+    }
+
+    /// Get the source file name (without path) for display
+    pub fn source_file_name(&self) -> &str {
+        self.source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown")
+    }
+
+    /// Extract timestamp from the parsed line, if available
+    pub fn timestamp(&self) -> Option<&jiff::Timestamp> {
+        match &self.parsed {
+            Printable::Canonical(canonical) => Some(&canonical.timestamp),
+            Printable::Message(message) => message.timestamp.as_ref(),
+            Printable::TimeOnly(timestamped) => Some(&timestamped.timestamp),
+            Printable::Json(_) => None,
+        }
+    }
+
+    /// Get the sort key for multi-file chronological ordering
+    pub fn sort_key(&self) -> SortKey {
+        if let Some(ts) = self.timestamp() {
+            // If we have a timestamp, use it for sorting
+            SortKey::Timestamp(ts.clone())
+        } else {
+            // If no timestamp, sort by file path and line number to maintain file order
+            SortKey::FileOrder {
+                file: self.source_file.clone(),
+                line: self.line_number,
+            }
+        }
+    }
+}
+
+/// Key used for sorting multi-file lines chronologically while preserving file
+/// order for non-timestamped lines
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SortKey {
+    /// Sort by extracted timestamp (highest priority)
+    Timestamp(jiff::Timestamp),
+    /// Sort by file path and line number for non-timestamped lines (lower
+    /// priority)
+    FileOrder { file: PathBuf, line: u64 },
+}
+
+impl PartialOrd for SortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SortKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            // Timestamp vs Timestamp: chronological order
+            (SortKey::Timestamp(a), SortKey::Timestamp(b)) => a.cmp(b),
+
+            // FileOrder vs FileOrder: file path, then line number
+            (SortKey::FileOrder { file: f1, line: l1 }, SortKey::FileOrder { file: f2, line: l2 }) => {
+                f1.cmp(f2).then(l1.cmp(l2))
+            }
+
+            // Mixed: Need to be smart about this
+            (SortKey::Timestamp(_), SortKey::FileOrder { .. }) => {
+                // Timestamped lines get sorted chronologically
+                // Non-timestamped lines are assumed to be "now" relative to their position
+                // This is tricky - for now, timestamped lines come first
+                Ordering::Less
+            }
+
+            (SortKey::FileOrder { .. }, SortKey::Timestamp(_)) => {
+                // Reverse of above
+                Ordering::Greater
+            }
+        }
+    }
+}
+
+impl<'a> PrettyPrintable for SourcedLine<'a> {
+    fn write(&self, buffer: &mut BytesMut) -> usize {
+        // For now, just delegate to the wrapped Printable
+        // TODO: Add source file display based on config flags
+        self.parsed.write(buffer)
+    }
+    fn cells(&self) -> Vec<String> {
+        self.parsed.cells()
+    }
+}
+
+impl<'a> Display for SourcedLine<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // For now, just delegate to the wrapped Printable
+        self.parsed.fmt(f)
+    }
 }
 
 impl<'a> PrettyPrintable for Printable<'a> {
@@ -225,7 +380,17 @@ impl<'a> PrettyPrintable for Printable<'a> {
         match self {
             Printable::Canonical(canonical) => canonical.as_ref().write(buffer),
             Printable::Message(message) => message.as_ref().write(buffer),
+            Printable::TimeOnly(timestamped) => timestamped.write(buffer),
             Printable::Json(generic) => generic.write(buffer),
+        }
+    }
+
+    fn cells(&self) -> Vec<String> {
+        match self {
+            Printable::Canonical(canonical) => canonical.as_ref().cells(),
+            Printable::Message(message) => message.as_ref().cells(),
+            Printable::TimeOnly(timestamped) => timestamped.cells(),
+            Printable::Json(generic) => generic.cells(),
         }
     }
 }
@@ -235,6 +400,7 @@ impl<'a> Display for Printable<'a> {
         match self {
             Printable::Canonical(canonical) => canonical.fmt(f),
             Printable::Message(message) => message.fmt(f),
+            Printable::TimeOnly(timestamped) => timestamped.fmt(f),
             Printable::Json(generic) => generic.fmt(f),
         }
     }
@@ -267,6 +433,10 @@ impl PrettyPrintable for &GenericJson {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
+        write_rest(*self, buffer, max_message_width, padding)
+    }
+
+    fn cells(&self) -> Vec<String> {
         let mut cells: Vec<String> = Vec::new();
         match self.rest {
             Value::Object(ref map) => {
@@ -278,32 +448,7 @@ impl PrettyPrintable for &GenericJson {
                 cells.push(colorize_map_entry("rest", &self.rest));
             }
         }
-
-        // Write the columns, handling multi-line output with proper padding
-        if !cells.is_empty() {
-            let mut column_buffer = BytesMut::new();
-            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
-
-            let column_output = String::from_utf8_lossy(&column_buffer);
-            let mut first_line = true;
-
-            for line in column_output.lines() {
-                if first_line {
-                    buffer.extend_from_slice(line.as_bytes());
-                    first_line = false;
-                } else {
-                    // Add padding for continuation lines
-                    for _ in 0..padding {
-                        buffer.extend_from_slice(b" ");
-                    }
-                    buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(line.as_bytes());
-                }
-                buffer.extend_from_slice(b"\n");
-            }
-        }
-
-        buffer.len()
+        cells
     }
 }
 
@@ -318,9 +463,71 @@ impl Display for GenericJson {
     }
 }
 
+/// The *only* thing we could recognize here was a timestamp.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Timestamped {
+    /// The time this message was logged.
+    #[serde(alias = "time", alias = "ts")]
+    timestamp: jiff::Timestamp,
+    /// Everything else.
+    #[serde(flatten)]
+    rest: serde_json::Value,
+}
+
+impl Display for Timestamped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = BytesMut::with_capacity(2048);
+        self.write(&mut buffer);
+        buffer.utf8_chunks().try_for_each(|chunk| {
+            let c = chunk.valid();
+            write!(f, "{c}")
+        })
+    }
+}
+
+impl PrettyPrintable for &Timestamped {
+    fn write(&self, buffer: &mut BytesMut) -> usize {
+        let show_time = config::show_time();
+        let termwidth = termwidth();
+        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
+        let padding = if show_time {
+            LEVEL_WIDTH + 1 + MODULE_WIDTH
+        } else {
+            LEVEL_WIDTH
+        };
+
+        buffer.extend_from_slice(JSON_HEADER);
+        if show_time {
+            buffer.extend_from_slice(b" ");
+            write_timestamp_column(buffer, &self.timestamp);
+        } else {
+            buffer.extend_from_slice(COL_SEP.as_bytes());
+        }
+
+        write_rest(*self, buffer, max_message_width, padding)
+    }
+
+    fn cells(&self) -> Vec<String> {
+        let mut cells: Vec<String> = Vec::new();
+        match self.rest {
+            Value::Object(ref map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
+            }
+            _ => {
+                cells.push(colorize_map_entry("rest", &self.rest));
+            }
+        }
+        cells
+    }
+}
+
 /// This is a possibly familiar format that we require conformance to.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Canonical<'a> {
+    /// The time this message was logged.
+    #[serde(alias = "time", alias = "ts")]
     timestamp: jiff::Timestamp,
     level: Cow<'a, str>,
     message: Cow<'a, str>,
@@ -365,13 +572,13 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         buffer.extend_from_slice(self.request_id.bright_yellow().to_string().as_bytes());
         buffer.extend_from_slice(b"  ");
         count += self.request_id.len() + 2;
-        let mut formatted = format!("{} {} {}", self.method.blue(), self.url.blue(), self.status.blue());
+        let mut formatted = format!("{} {} {} ", self.method.blue(), self.url.blue(), self.status.blue());
         buffer.extend_from_slice(formatted.as_bytes());
         count += ansi_width(&formatted);
         formatted.clear();
 
         let sized = format_size(self.size, BINARY);
-        formatted = format!("  {}{}", "size=".dimmed(), sized.bright_magenta());
+        formatted = format!("{}{}  ", "size=".dimmed(), sized.bright_magenta());
         if count + ansi_width(&formatted) >= max_message_width {
             start_new_line(buffer, padding);
             count = padding + 3
@@ -380,7 +587,7 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         count += ansi_width(&formatted);
 
         // tedious repetition but
-        formatted = format!("  {}{}", "elapsed=".dimmed(), self.elapsed.magenta());
+        formatted = format!("{}{}  ", "elapsed=".dimmed(), self.elapsed.magenta());
         if count + ansi_width(&formatted) >= max_message_width {
             start_new_line(buffer, padding);
             count = padding + 3
@@ -388,7 +595,7 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         buffer.extend_from_slice(formatted.as_bytes());
         count += ansi_width(&formatted);
 
-        formatted = format!("  {}{}", "remote_host=".dimmed(), self.remote_host.blue());
+        formatted = format!("{}{}  ", "remote_host=".dimmed(), self.remote_host.blue());
         if count + ansi_width(&formatted) >= max_message_width {
             start_new_line(buffer, padding);
             count = padding + 3
@@ -396,7 +603,7 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         buffer.extend_from_slice(formatted.as_bytes());
         count += ansi_width(&formatted);
 
-        formatted = format!("  {}{}", "user_agent=".dimmed(), self.user_agent.green());
+        formatted = format!("{}{}  ", "user_agent=".dimmed(), self.user_agent.green());
         if count + ansi_width(&formatted) >= max_message_width {
             start_new_line(buffer, padding);
         }
@@ -437,6 +644,21 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
         }
 
         buffer.len()
+    }
+
+    fn cells(&self) -> Vec<String> {
+        let mut cells: Vec<String> = Vec::new();
+        match self.rest {
+            Value::Object(ref map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
+            }
+            _ => {
+                cells.push(colorize_map_entry("rest", &self.rest));
+            }
+        }
+        cells
     }
 }
 
@@ -670,6 +892,21 @@ impl<'a> PrettyPrintable for &Message<'a> {
 
         // if it is this easy I can get rid of the return value
         buffer.len()
+    }
+
+    fn cells(&self) -> Vec<String> {
+        let mut cells: Vec<String> = Vec::new();
+        match self.rest {
+            Value::Object(ref map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
+            }
+            _ => {
+                cells.push(colorize_map_entry("rest", &self.rest));
+            }
+        }
+        cells
     }
 }
 

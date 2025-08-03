@@ -13,6 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cargo build --release` - Build optimized release version
 - `cargo run` - Run the application (reads from stdin by default)
 - `cargo run -- <file>` - Run with a specific file
+- `cargo run -- <file1> <file2>` - Run with multiple files (static mode)
+- `cargo run -- -f <file1> <file2>` - Follow multiple files (tailing mode)
+- `cargo run -- -f *.log` - Follow all .log files using glob patterns
+- `cargo run -- -n 10 <file>` - Show last 10 lines
+- `cargo run -- --window 500 -f *.log` - Follow with 500ms batch window
 - `cargo run -- --help` - Show command-line help
 
 ### Testing and Quality
@@ -23,29 +28,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Code Architecture
 
 ### Core Structure
-The application is split into three main modules:
+The application is now split into seven specialized modules:
 
-1. **`src/main.rs`** - Main application logic:
-   - Command-line argument parsing with `clap`
-   - File handling with offset support (positive/negative line offsets)
-   - Stdin handling with tailing support
-   - Backward seeking implementation for tail functionality
-   - Global configuration via `OnceLock`
+1. **`src/main.rs`** - Application entry point and mode handlers:
+   - Tokio async runtime coordination
+   - Multi-file static and tailing mode implementations
+   - Single file handling with backward seeking
+   - Stdin processing with time-based flushing
+   - Process coordination between watcher, batcher, and output
 
-2. **`src/loglines.rs`** - Log parsing and formatting:
+2. **`src/config.rs`** - Centralized configuration management:
+   - `ConfigOpts` struct with comprehensive tail-compatible options
+   - Global `OnceLock` configuration with accessor functions
+   - Intelligent argument parsing with glob pattern expansion
+   - Support for `-f`/`-F`, offset modes (`-n`, `-c`, `-b`), and batch windows
+   - `InputMode` enum distinguishing stdin, single-file, and multi-file modes
+
+3. **`src/loglines.rs`** - High-performance log parsing and formatting:
    - `Printable` enum for different log types with boxing for memory efficiency
-   - `Canonical` struct for strict, well-structured HTTP logs
-   - `Message` struct for flexible structured log entries
+   - `Canonical` struct for strict, well-structured HTTP logs (25-34% faster)
+   - `Message` struct for flexible structured log entries with aliases
    - `GenericJson` for arbitrary JSON objects
-   - Direct buffer writing for optimal performance
-   - Terminal-aware text wrapping and colorization
+   - Direct buffer writing with pre-compiled ANSI sequences
+   - Zero-copy deserialization using `Cow<'a, str>`
 
-3. **`src/columns.rs`** - Custom column layout engine:
-   - High-performance column layout algorithm
-   - ANSI-aware width calculation
+4. **`src/columns.rs`** - Custom column layout engine:
+   - High-performance column layout algorithm replacing `term_grid`
+   - ANSI-aware width calculation for colored text
    - Direct buffer writing (zero intermediate allocations)
    - Configurable padding and intelligent line wrapping
    - Comprehensive test coverage (22 tests)
+
+5. **`src/file_state.rs`** - File state tracking for multi-file tailing:
+   - Individual file position tracking with inode-based rotation detection
+   - `FileStateManager` for coordinating multiple file states
+   - Support for sticky (`-F`) vs follow (`-f`) semantics
+   - Efficient new-line reading from specific file positions
+
+6. **`src/watcher.rs`** - File system event monitoring:
+   - Cross-platform file watching using `notify` crate
+   - Async event conversion and coordination via tokio channels
+   - Integration with file state manager for change detection
+   - Support for multiple file watching with event aggregation
+
+7. **`src/batch.rs`** - Multi-file line batching and timestamp sorting:
+   - Time-windowed batching for chronological log line ordering
+   - Priority queue-based sorting by extracted timestamps
+   - Async processing pipeline with configurable batch windows
+   - Support for mixed timestamped/non-timestamped log lines
 
 ### Key Data Structures
 
@@ -78,7 +108,12 @@ The application is split into three main modules:
 - `ansi-width` - ANSI escape sequence aware width calculation for colored text
 - `bytes` - Efficient byte buffer handling with `BytesMut`
 - `humansize` - Binary size formatting (KB, MB, GB)
-- `ripline` - Available for future I/O optimizations (multi-file scenarios)
+- `tokio` - Async runtime for multi-file coordination and event handling
+- `notify` - Cross-platform file system event watching
+- `async-watcher` - Async wrapper for notify integration
+- `futures` - Stream utilities for async coordination
+- `glob` - Glob pattern matching for file expansion
+- `ripline` - Available for future I/O optimizations (not currently used)
 
 ### Output Format
 The tool produces optimized columnar output with:
@@ -147,7 +182,17 @@ The application is highly optimized and fully functional with:
 - ✅ Excellent memory efficiency (1.8% memory footprint)
 - ✅ Direct buffer writing throughout formatting pipeline
 - ✅ ANSI-aware terminal output with intelligent wrapping
-- 🔄 **Future**: Multi-file tailing (foundation laid with `ripline` dependency)
+- ✅ **Multi-file tailing functionality** with async coordination:
+  - Cross-platform file watching via `notify` crate
+  - Timestamp-based line batching and chronological sorting
+  - Configurable batch windows (default: 250ms)
+  - Glob pattern support for file matching
+  - Inode-based file rotation detection
+  - Support for both static (read-once) and tailing modes
+- 🐛 **Known Issues**:
+  - Batch processor bug was fixed: `start()` method now properly calls `process_loop()`
+  - Multiple unused imports and dead code warnings (cosmetic)
+  - Multi-file functionality implemented but needs testing
 
 ### Optimization Insights
 - **Architectural changes > micro-optimizations**: The `Canonical` type provided 25-34% improvement vs 5-6% from buffer writing

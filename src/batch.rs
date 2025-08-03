@@ -201,11 +201,19 @@ impl BatchProcessor {
         let (line_sender, line_receiver) = mpsc::unbounded_channel();
         let (batch_sender, batch_receiver) = mpsc::unbounded_channel();
 
-        self.receiver = Some(line_receiver);
-        self.sender = Some(batch_sender);
+        // Move the channels into a new processor instance for the spawned task
+        let mut processor = BatchProcessor {
+            config: self.config.clone(),
+            pending_lines: BinaryHeap::new(),
+            receiver: Some(line_receiver),
+            sender: Some(batch_sender),
+            window_start: None,
+        };
 
         tokio::spawn(async move {
-            // TODO need to process
+            if let Err(e) = processor.process_loop().await {
+                eprintln!("Batch processor error: {}", e);
+            }
         });
 
         Ok((line_sender, batch_receiver))

@@ -23,6 +23,29 @@ use loglines::*;
 
 use crate::config::InputMode;
 
+/// Extract timestamp from a JSON line without full parsing to Printable
+/// This does single parsing for timestamp extraction only
+fn extract_timestamp_from_line(line: &str) -> Option<jiff::Timestamp> {
+    // Try to parse as JSON first
+    let json_value: serde_json::Value = serde_json::from_str(line).ok()?;
+
+    // Look for timestamp fields in common locations
+    if let Some(obj) = json_value.as_object() {
+        // Check the common timestamp field names
+        for field_name in ["timestamp", "time", "ts"] {
+            if let Some(ts_value) = obj.get(field_name) {
+                if let Some(ts_str) = ts_value.as_str() {
+                    if let Ok(timestamp) = ts_str.parse::<jiff::Timestamp>() {
+                        return Some(timestamp);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// How long we wait before flushing data to stdout when tailing.
 static TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -348,8 +371,7 @@ async fn main() -> anyhow::Result<()> {
 
     match mode {
         InputMode::Stdin { .. } => {
-            // Handle stdin with optional offset (offset not currently implemented for
-            // stdin)
+            // Handle stdin with optional offset (TODO implement offset for stdin)
             handle_stdin(args.follow)
         }
         InputMode::SingleFile { path } => {
@@ -370,7 +392,6 @@ async fn main() -> anyhow::Result<()> {
 
 /// Handle multi-file static mode (read all files once, no following)
 fn handle_multi_file_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
-    use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
     use crate::file_state::FileStateManager;
 
     let mut file_manager = FileStateManager::new();
@@ -380,28 +401,58 @@ fn handle_multi_file_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
         file_manager.add_file(path)?;
     }
 
-    // Read all lines from all files
-    let all_lines = file_manager.read_new_lines()?;
+    // Read all lines from all files (for static reading)
+    let all_lines = file_manager.read_all_lines()?;
 
-    // Create batched lines with timestamps
-    let mut batched_lines = Vec::new();
+    // For multi-file static mode, we need to sort lines chronologically
+    // First, collect all lines with their metadata for sorting
+    let mut all_sourced_lines = Vec::new();
     for (file_path, lines) in all_lines {
-        for (line_num, line) in lines.into_iter().enumerate() {
-            let mut batched_line = BatchedLine::new(line, file_path.clone(), line_num as u64);
-            let _ = batched_line.parse(); // Parse to extract timestamp
-            batched_lines.push(batched_line);
+        for (line_num, line_content) in lines.into_iter().enumerate() {
+            all_sourced_lines.push((file_path.clone(), line_num as u64, line_content));
         }
     }
 
-    // Sort by timestamp/received order
-    batched_lines.sort_by_key(|line| line.sort_key());
+    // Create a struct to hold parsed information for sorting
+    #[derive(Debug)]
+    struct SortableLine {
+        file_path: PathBuf,
+        line_number: u64,
+        content: String,
+        timestamp: Option<jiff::Timestamp>,
+    }
 
-    // Output the sorted lines
+    // Parse and extract timestamps for sorting
+    let mut sortable_lines = Vec::new();
+    for (file_path, line_number, content) in all_sourced_lines {
+        let timestamp = extract_timestamp_from_line(&content);
+        sortable_lines.push(SortableLine {
+            file_path,
+            line_number,
+            content,
+            timestamp,
+        });
+    }
+
+    // Sort using the same logic as SortKey
+    sortable_lines.sort_by(|a, b| {
+        match (&a.timestamp, &b.timestamp) {
+            (Some(ts_a), Some(ts_b)) => ts_a.cmp(ts_b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => {
+                // Both non-timestamped: sort by file path, then line number
+                a.file_path.cmp(&b.file_path).then(a.line_number.cmp(&b.line_number))
+            }
+        }
+    });
+
+    // Output the sorted lines using existing process_line function
     let mut outlock = io::stdout().lock();
     let mut buffer = BytesMut::with_capacity(2048);
 
-    for batched_line in batched_lines {
-        process_line(&batched_line.content, &mut buffer, &mut outlock)?;
+    for sortable_line in sortable_lines {
+        process_line(&sortable_line.content, &mut buffer, &mut outlock)?;
     }
 
     outlock.flush()?;
@@ -410,8 +461,6 @@ fn handle_multi_file_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
 
 /// Handle multi-file tailing mode (watch for changes and follow)
 async fn handle_multi_file_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
-    use std::time::Duration;
-
     use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
     use crate::watcher::{WatchEvent, create_watcher};
 

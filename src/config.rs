@@ -218,4 +218,22 @@ mod tests {
         assert_eq!(config.offset, -5);
         assert!(matches!(config.mode, InputMode::Stdin));
     }
+
+    #[test]
+    fn glob_expansions() {
+        let fixture_glob = "./fixtures/*.log".to_string();
+        let results = expand_globs(&[fixture_glob]).expect("this list of paths should expand successfully");
+        assert_eq!(results.len(), 6); // changes if we add fixtures to that directory
+        assert_eq!(
+            results.as_slice(),
+            vec![
+                PathBuf::from("fixtures/ascii_colors.log"),
+                PathBuf::from("fixtures/java_stacktrace.log"),
+                PathBuf::from("fixtures/just_loglines.log"),
+                PathBuf::from("fixtures/mixed_json_types.log"),
+                PathBuf::from("fixtures/mixed_text_json.log"),
+                PathBuf::from("fixtures/windows_line_endings.log")
+            ]
+        );
+    }
 }

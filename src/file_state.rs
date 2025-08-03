@@ -100,7 +100,10 @@ impl FileState {
                 true
             }
         } else {
-            // no changes
+            // No rotation: update normal file state
+            self.available = metadata.is_file();
+            self.size = new_size;
+            self.inode = new_inode;
             false
         };
 
@@ -253,6 +256,46 @@ impl FileStateManager {
         }
 
         Ok(all_new_lines)
+    }
+
+    /// Read all lines from all tracked files (for static multi-file reading)
+    pub fn read_all_lines(&mut self) -> Result<Vec<(PathBuf, Vec<String>)>> {
+        let mut all_lines = Vec::new();
+
+        for (path, state) in &self.states {
+            if state.available {
+                let lines = Self::read_all_lines_from_file(state)?;
+                if !lines.is_empty() {
+                    all_lines.push((path.clone(), lines));
+                }
+            }
+        }
+
+        Ok(all_lines)
+    }
+
+    /// Read all lines from a specific file from the beginning
+    fn read_all_lines_from_file(state: &FileState) -> Result<Vec<String>> {
+        if !state.available {
+            return Ok(Vec::new());
+        }
+
+        let mut file =
+            File::open(&state.path).with_context(|| format!("Failed to open file: {}", state.path.display()))?;
+
+        // Always start from the beginning for static reading
+        file.seek(SeekFrom::Start(0))
+            .with_context(|| format!("Failed to seek to beginning of {}", state.path.display()))?;
+
+        let reader = BufReader::new(file);
+        let mut lines = Vec::new();
+
+        for line_result in reader.lines() {
+            let line = line_result.with_context(|| format!("Failed to read line from {}", state.path.display()))?;
+            lines.push(line);
+        }
+
+        Ok(lines)
     }
 }
 
