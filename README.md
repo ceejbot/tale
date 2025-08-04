@@ -12,7 +12,7 @@ A tail-compatible tool for pretty-printing ndjson files, especially logs.
 
 It displays the colorfully-formatted contents of FILE, by default stdin, to stdout. Tale highlights
 the fields likely to appear in log lines for servers, such as level or severity, the log message,
-timestamps, and so on. It also displays every field that shows up in the log line,  using the color
+timestamps, and so on. It displays every field that shows up in the log line, using the color
 theme you have set in your terminal.
 
 Lines that are invalid json are printed intact, without formatting.
@@ -20,15 +20,13 @@ Lines that are invalid json are printed intact, without formatting.
 `tail` can also follow and display more than one file at a time, with header decoration options like
 `tail`'s.
 
-Usage: tale [OPTIONS] --blocks <BLOCKS> --bytes <BYTES> --offset <OFFSET> [ARGS]...
+Usage: tale [OPTIONS] [ARGS]...
 
 Arguments:
   [ARGS]...
-          Arguments: [offset] [file] or [file1] [file2] ... for multi-file mode
+          Arguments: (offset) [file ...] where offset can be +N, -N, or N
 
 Options:
-  -t, --timestamps
-          Show timestamps, which are hidden by default
   -f, --follow
           Follow the file, continuing to watch for more data to arrive
   -F, --sticky
@@ -36,19 +34,22 @@ Options:
           the file does not exist yet, wait and display it from the beginning if and when it is
           created
   -b, --blocks <BLOCKS>
-          Start tailing offset by N blocks.  Not yet respected
+          Start tailing the input offset by ±N blocks
   -c, --bytes <BYTES>
-          Start tailing offset by N bytes; e.g., to skip garbage.  Not yet respected
+          Start tailing the input offset by ±N bytes; e.g., to skip garbage
   -n, --offset <OFFSET>
-          Start tailing offset by N lines. Not yet respected
+          Start tailing the input offset by ±N lines
   -v, --verbose
           When following more than one file, show a header with the file name along with every line
-          from that file.  Not yet respected
+          from that file.  Not yet implemented
   -q, --quiet
-          Do not ever show file name headers when following more than one file
+          Do not ever show file name headers when following more than one file. Not yet implemented
+  -t, --timestamps
+          Show timestamps. Defaults to false.
       --window <WINDOW>
           Batch window size for multi-file tailing (in milliseconds)
           [default: 250]
+
   -h, --help
           Print help (see a summary with '-h')
   -V, --version
@@ -63,7 +64,7 @@ On my Macbook `tale` will pretty-print a million-line file at an approx rate of 
 
 There is fairly stupid single-pass layout approach to print the key/value pairs I don't have an opinion about in columns. There's hand-tweaked formatting for the keys I do have an opinion about. If you are using a log format that looks a lot like canonical logs but in json, it's very efficient and readable.
 
-File reading is probably pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode.
+File reading is probably pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode. There's similarly bad behavior for very large byte and block offsets, because I haven't yet implemented falling back to tempfiles when I hit certain size thresholds.
 
 I have [ripline](https://lib.rs/crates/ripline) in my back pocket for when I start tailing multiple files at once and being I/O bound instead of CPU bound is even remotely possible.
 

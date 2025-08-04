@@ -54,7 +54,7 @@ pub mod constants {
 /// It displays the colorfully-formatted contents of FILE, by default stdin,
 /// to stdout. Tale highlights the fields likely to appear in log lines for
 /// servers, such as level or severity, the log message, timestamps, and so
-/// on. It also displays every field that shows up in the log line,  using
+/// on. It also displays every field that shows up in the log line, using
 /// the color theme you have set in your terminal.
 ///
 /// Lines that are invalid json are printed intact, without formatting.
@@ -70,21 +70,21 @@ struct Args {
     /// from the beginning if and when it is created.
     #[arg(short = 'F', long)]
     sticky: bool,
-    /// Start tailing offset by N blocks.  Not yet respected.
+    /// Start tailing the input offset by ±N blocks.
     #[arg(short, long, group = "units")]
     blocks: Option<i64>,
-    /// Start tailing offset by N bytes; e.g., to skip garbage.  Not yet
-    /// respected.
+    /// Start tailing the input offset by ±N bytes; e.g., to skip garbage.
     #[arg(short = 'c', long, group = "units")]
     bytes: Option<i64>,
-    /// Start tailing offset by N lines. Not yet respected.
+    /// Start tailing the input offset by ±N lines.
     #[arg(short = 'n', long, group = "units")]
     offset: Option<i64>,
     /// When following more than one file, show a header with the file name
-    /// along with every line from that file.  Not yet respected.
+    /// along with every line from that file. Not yet implemented.
     #[arg(short, long)]
     verbose: bool,
     /// Do not ever show file name headers when following more than one file.
+    /// Not yet implemented.
     #[arg(short, long, conflicts_with = "verbose")]
     quiet: bool,
 
@@ -128,7 +128,8 @@ pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutL
     Ok(())
 }
 
-/// Strip trailing newline(s) to match BufReader::lines() behavior
+/// Strip trailing newline(s) from the string input, handling Windows line
+/// endings as well.
 #[inline]
 pub fn strip_line_ending(line: &mut String) {
     if line.ends_with('\n') {
