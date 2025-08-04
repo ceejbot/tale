@@ -31,8 +31,20 @@ pub mod constants {
     /// Flush stdout when we've written at least this many lines.
     pub const FLUSH_LINE_COUNT: u16 = 40;
 
-    // The traditional unix block size in bytes.
+    /// The traditional unix block size in bytes.
     pub const BLOCK_SIZE: u64 = 512;
+
+    /// Buffer size for reading from stdin/files.
+    pub const READ_BUFFER_SIZE: usize = 8192;
+
+    /// Default capacity for line strings.
+    pub const LINE_CAPACITY: usize = 512;
+
+    /// Default capacity for output byte buffers.
+    pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
+
+    /// Memory limit for line buffering in negative line offset mode.
+    pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -165,7 +177,8 @@ mod tests {
 
     #[test]
     fn layout_one() {
-        config::set(ConfigOpts::default()).expect("tests should successfully set config");
+        // Try to set config, but don't fail if it's already set by another test
+        let _ = config::set(ConfigOpts::default());
 
         let logline = r##"{
             "timestamp": "2025-08-01T10:45:03Z",
