@@ -51,13 +51,13 @@ pub fn mode() -> &'static InputMode {
 /// A sensible holder for our configuration.
 #[derive(Debug, Clone, Default)]
 pub struct ConfigOpts {
-    tailing: bool,
-    sticky: bool,
-    offset: i64,
-    offset_unit: Offset,
-    show_time: bool,
-    batch_window_ms: u64,
-    mode: InputMode,
+    pub tailing: bool,
+    pub sticky: bool,
+    pub offset: i64,
+    pub offset_unit: Offset,
+    pub show_time: bool,
+    pub batch_window_ms: u64,
+    pub mode: InputMode,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -223,11 +223,12 @@ mod tests {
     fn glob_expansions() {
         let fixture_glob = "./fixtures/*.log".to_string();
         let results = expand_globs(&[fixture_glob]).expect("this list of paths should expand successfully");
-        assert_eq!(results.len(), 6); // changes if we add fixtures to that directory
+        assert_eq!(results.len(), 7); // changes if we add fixtures to that directory
         assert_eq!(
             results.as_slice(),
             vec![
                 PathBuf::from("fixtures/ascii_colors.log"),
+                PathBuf::from("fixtures/garbage_prefix.log"),
                 PathBuf::from("fixtures/java_stacktrace.log"),
                 PathBuf::from("fixtures/just_loglines.log"),
                 PathBuf::from("fixtures/mixed_json_types.log"),

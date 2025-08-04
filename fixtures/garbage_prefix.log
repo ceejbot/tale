@@ -1,0 +1,5 @@
+GARBAGE_BYTES_HERE_NOT_JSON_123456789012345678901234567890
+{"timestamp": "2025-08-01T10:00:00Z", "level": "INFO", "message": "First valid log line"}
+{"timestamp": "2025-08-01T10:00:01Z", "level": "DEBUG", "message": "Second valid log line"}
+{"timestamp": "2025-08-01T10:00:02Z", "level": "ERROR", "message": "Third valid log line"}
+{"timestamp": "2025-08-01T10:00:03Z", "level": "WARN", "message": "Fourth valid log line"}

@@ -1113,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chronological_sort_across_files() {
+    fn chronological_sort_across_files() {
         use std::path::PathBuf;
 
         // Lines from different files with different timestamps
@@ -1157,7 +1157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mixed_timestamped_and_non_timestamped() {
+    fn sorting_mixed_types() {
         use std::path::PathBuf;
 
         // Mix of timestamped and non-timestamped lines
@@ -1195,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_files_preserve_file_order_for_non_timestamped() {
+    fn sorting_preserves_file_order() {
         use std::path::PathBuf;
 
         // Non-timestamped lines from multiple files
@@ -1223,14 +1223,14 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_case_empty_input() {
+    fn sorting_handle_empty_input() {
         let mut lines: Vec<SourcedLine<'_>> = vec![];
         lines.sort_by_key(|xs| xs.sort_key());
         assert_eq!(lines.len(), 0);
     }
 
     #[test]
-    fn test_edge_case_invalid_json() {
+    fn sorting_handles_invalid_json() {
         use std::path::PathBuf;
 
         // Invalid JSON should be treated as non-timestamped
