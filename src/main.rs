@@ -25,27 +25,6 @@ use crate::config::InputMode;
 
 /// Extract timestamp from a JSON line without full parsing to Printable
 /// This does single parsing for timestamp extraction only
-fn extract_timestamp_from_line(line: &str) -> Option<jiff::Timestamp> {
-    // Try to parse as JSON first
-    let json_value: serde_json::Value = serde_json::from_str(line).ok()?;
-
-    // Look for timestamp fields in common locations
-    if let Some(obj) = json_value.as_object() {
-        // Check the common timestamp field names
-        for field_name in ["timestamp", "time", "ts"] {
-            if let Some(ts_value) = obj.get(field_name) {
-                if let Some(ts_str) = ts_value.as_str() {
-                    if let Ok(timestamp) = ts_str.parse::<jiff::Timestamp>() {
-                        return Some(timestamp);
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
 /// How long we wait before flushing data to stdout when tailing.
 static TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -404,55 +383,37 @@ fn handle_multi_file_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
     // Read all lines from all files (for static reading)
     let all_lines = file_manager.read_all_lines()?;
 
-    // For multi-file static mode, we need to sort lines chronologically
-    // First, collect all lines with their metadata for sorting
-    let mut all_sourced_lines = Vec::new();
-    for (file_path, lines) in all_lines {
-        for (line_num, line_content) in lines.into_iter().enumerate() {
-            all_sourced_lines.push((file_path.clone(), line_num as u64, line_content));
-        }
-    }
+    // Collect all lines, parse and convert to SourcedLine immediately
+    let mut all_sourced_lines: Vec<SourcedLine<'_>> = Vec::new();
 
-    // Create a struct to hold parsed information for sorting
-    #[derive(Debug)]
-    struct SortableLine {
-        file_path: PathBuf,
-        line_number: u64,
-        content: String,
-        timestamp: Option<jiff::Timestamp>,
-    }
-
-    // Parse and extract timestamps for sorting
-    let mut sortable_lines = Vec::new();
-    for (file_path, line_number, content) in all_sourced_lines {
-        let timestamp = extract_timestamp_from_line(&content);
-        sortable_lines.push(SortableLine {
-            file_path,
-            line_number,
-            content,
-            timestamp,
+    all_lines.iter().for_each(|(file_path, lines)| {
+        lines.iter().enumerate().for_each(|(line_num, line_content)| {
+            let parsed: Printable<'_> = {
+                match serde_json::from_str::<Printable<'_>>(&line_content) {
+                    Ok(printable) => printable,
+                    Err(_) => {
+                        // If parsing as Printable fails, it's either invalid JSON or doesn't match any
+                        // variant Use the Text fallback in either case
+                        Printable::Text(line_content.clone())
+                    }
+                }
+            };
+            let sourced = SourcedLine::new(parsed, file_path.clone(), line_num);
+            all_sourced_lines.push(sourced);
         });
-    }
-
-    // Sort using the same logic as SortKey
-    sortable_lines.sort_by(|a, b| {
-        match (&a.timestamp, &b.timestamp) {
-            (Some(ts_a), Some(ts_b)) => ts_a.cmp(ts_b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => {
-                // Both non-timestamped: sort by file path, then line number
-                a.file_path.cmp(&b.file_path).then(a.line_number.cmp(&b.line_number))
-            }
-        }
     });
+    // Sort using the stable multi-file sorting function
+    all_sourced_lines.sort_by_key(|line| line.sort_key());
 
     // Output the sorted lines using existing process_line function
     let mut outlock = io::stdout().lock();
     let mut buffer = BytesMut::with_capacity(2048);
 
-    for sortable_line in sortable_lines {
-        process_line(&sortable_line.content, &mut buffer, &mut outlock)?;
+    for wrapped in all_sourced_lines {
+        wrapped.write(&mut buffer);
+        outlock.write_all(buffer.chunk())?;
+        outlock.write_all(&[0x0a; 1])?; // blank line
+        buffer.clear();
     }
 
     outlock.flush()?;

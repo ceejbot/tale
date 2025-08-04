@@ -236,7 +236,7 @@ impl BatchProcessor {
                     match line_opt {
                         Some(mut line) => {
                             // Parse the line to extract timestamp
-                            if let Err(e) = line.parse() {
+                            if let Err(_e) = line.parse() {
                                 // this might fail, but we carry on
                                 // eprintln!("Failed to parse line: {}", e);
                             }
@@ -292,7 +292,7 @@ impl BatchProcessor {
         // Send the sorted batch
         if let Err(_) = batch_sender.send(sorted_lines) {
             // Receiver dropped, return error to stop processing
-            return Err(anyhow::anyhow!("Batch receiver dropped"));
+            return Err(anyhow!("Batch receiver dropped"));
         }
 
         Ok(())

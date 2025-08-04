@@ -46,7 +46,7 @@ impl FileState {
         Ok(state)
     }
 
-    /// Set the starting position (e.g., for tailing from end)
+    /// Set the starting position
     pub fn set_position(&mut self, position: u64) {
         self.position = position;
     }

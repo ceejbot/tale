@@ -254,6 +254,7 @@ pub enum Printable<'a> {
     Message(Box<Message<'a>>),
     TimeOnly(Timestamped),
     Json(GenericJson),
+    Text(String),
 }
 
 /// A wrapper that combines a parsed log line with source file metadata.
@@ -266,12 +267,12 @@ pub struct SourcedLine<'a> {
     /// The source file path
     pub source_file: PathBuf,
     /// Line number within the source file (0-based)
-    pub line_number: u64,
+    pub line_number: usize,
 }
 
 impl<'a> SourcedLine<'a> {
     /// Create a new SourcedLine
-    pub fn new(parsed: Printable<'a>, source_file: PathBuf, line_number: u64) -> Self {
+    pub fn new(parsed: Printable<'a>, source_file: PathBuf, line_number: usize) -> Self {
         Self {
             parsed,
             source_file,
@@ -294,6 +295,7 @@ impl<'a> SourcedLine<'a> {
             Printable::Message(message) => message.timestamp.as_ref(),
             Printable::TimeOnly(timestamped) => Some(&timestamped.timestamp),
             Printable::Json(_) => None,
+            Printable::Text(_) => None,
         }
     }
 
@@ -312,6 +314,20 @@ impl<'a> SourcedLine<'a> {
     }
 }
 
+impl<'a> From<(PathBuf, usize, &'a str)> for SourcedLine<'a> {
+    fn from(value: (PathBuf, usize, &'a str)) -> Self {
+        let parsed = match serde_json::from_str::<Printable<'a>>(value.2) {
+            Ok(v) => v,
+            Err(_) => Printable::Text(value.2.to_owned()),
+        };
+        Self {
+            parsed,
+            source_file: value.0,
+            line_number: value.1,
+        }
+    }
+}
+
 /// Key used for sorting multi-file lines chronologically while preserving file
 /// order for non-timestamped lines
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,7 +336,7 @@ pub enum SortKey {
     Timestamp(jiff::Timestamp),
     /// Sort by file path and line number for non-timestamped lines (lower
     /// priority)
-    FileOrder { file: PathBuf, line: u64 },
+    FileOrder { file: PathBuf, line: usize },
 }
 
 impl PartialOrd for SortKey {
@@ -382,6 +398,10 @@ impl<'a> PrettyPrintable for Printable<'a> {
             Printable::Message(message) => message.as_ref().write(buffer),
             Printable::TimeOnly(timestamped) => timestamped.write(buffer),
             Printable::Json(generic) => generic.write(buffer),
+            Printable::Text(text) => {
+                buffer.extend_from_slice(text.as_bytes());
+                buffer.len()
+            }
         }
     }
 
@@ -391,6 +411,7 @@ impl<'a> PrettyPrintable for Printable<'a> {
             Printable::Message(message) => message.as_ref().cells(),
             Printable::TimeOnly(timestamped) => timestamped.cells(),
             Printable::Json(generic) => generic.cells(),
+            Printable::Text(_) => Vec::new(),
         }
     }
 }
@@ -402,6 +423,7 @@ impl<'a> Display for Printable<'a> {
             Printable::Message(message) => message.fmt(f),
             Printable::TimeOnly(timestamped) => timestamped.fmt(f),
             Printable::Json(generic) => generic.fmt(f),
+            Printable::Text(text) => text.fmt(f),
         }
     }
 }
@@ -912,6 +934,10 @@ impl<'a> PrettyPrintable for &Message<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use jiff::Timestamp;
+
     use super::*;
 
     #[test]
@@ -967,5 +993,267 @@ mod tests {
             panic!("we expected a canonical log line")
         };
         assert_eq!(canonical.message, "HTTP PATCH /api/auth/login");
+    }
+
+    #[test]
+    fn stable_sort_single_file_no_timestamps() {
+        use std::path::PathBuf;
+
+        // Lines from a single file with no timestamps - should maintain original order
+        let lines = vec![
+            (PathBuf::from("test.log"), 0, r#"{"message": "third line"}"#.to_string()),
+            (PathBuf::from("test.log"), 1, r#"{"message": "first line"}"#.to_string()),
+            (
+                PathBuf::from("test.log"),
+                2,
+                r#"{"message": "second line"}"#.to_string(),
+            ),
+        ];
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Should maintain original order since no timestamps and same file
+        assert_eq!(sorted[0].line_number, 0);
+        assert_eq!(sorted[1].line_number, 1);
+        assert_eq!(sorted[2].line_number, 2);
+    }
+
+    #[test]
+    fn test_stable_sort_single_file_with_same_timestamps() {
+        use std::path::PathBuf;
+
+        // Lines with identical timestamps - should maintain original order (stable
+        // sort)
+        let lines = vec![
+            (
+                PathBuf::from("test.log"),
+                0,
+                r#"{"timestamp": "2025-08-01T10:00:00Z", "message": "first"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("test.log"),
+                1,
+                r#"{"timestamp": "2025-08-01T10:00:00Z", "message": "second"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("test.log"),
+                2,
+                r#"{"timestamp": "2025-08-01T10:00:00Z", "message": "third"}"#.to_string(),
+            ),
+        ];
+
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Should maintain original order due to stable sort with identical timestamps
+        // first
+        let Printable::TimeOnly(ref has_stamp) = sorted[0].parsed else {
+            panic!("that really should have parsed as having a timestamp");
+        };
+        let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
+        assert_eq!(has_stamp.timestamp, ts_parsed);
+
+        // second
+        let Printable::TimeOnly(ref has_stamp) = sorted[1].parsed else {
+            panic!("that really should have parsed as having a timestamp");
+        };
+        let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
+        assert_eq!(has_stamp.timestamp, ts_parsed);
+        let obj = has_stamp.rest.as_object().expect("rest should be a json object");
+        let message = obj.get("message").expect("there is a message in this bottle yeah-a");
+        assert_eq!(message, "second");
+
+        // third
+        let Printable::TimeOnly(ref has_stamp) = sorted[2].parsed else {
+            panic!("that really should have parsed as having a timestamp");
+        };
+        let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
+        assert_eq!(has_stamp.timestamp, ts_parsed);
+        let obj = has_stamp.rest.as_object().expect("rest should be a json object");
+        assert!(obj.contains_key("message"));
+        let message = obj.get("message").expect("there is a message in this bottle yeah-a");
+        assert_eq!(message, "third");
+    }
+
+    // test helper
+    fn extract_msg(item: &SourcedLine<'_>) -> String {
+        match item.parsed {
+            Printable::Canonical(ref canonical) => canonical.message.as_ref().to_owned(),
+            Printable::Message(ref message) => message.message.as_ref().to_owned(),
+            Printable::TimeOnly(ref timestamped) => {
+                // for these tests, the following is true, and it's reasonable to make these
+                // assertions.
+                let obj = timestamped.rest.as_object().expect("rest should be a json object");
+                let message = obj.get("message").expect("there is a message in this bottle yeah-a");
+                message.as_str().unwrap_or_default().to_string()
+            }
+            Printable::Json(ref generic_json) => {
+                // Handle JSON that didn't match other patterns - try to extract message field
+                if let Some(obj) = generic_json.rest.as_object() {
+                    if let Some(message) = obj.get("message") {
+                        return message.as_str().unwrap_or_default().to_string();
+                    }
+                }
+                String::default()
+            }
+            Printable::Text(ref v) => v.clone(),
+        }
+    }
+
+    #[test]
+    fn test_chronological_sort_across_files() {
+        use std::path::PathBuf;
+
+        // Lines from different files with different timestamps
+        let lines = vec![
+            (
+                PathBuf::from("file1.log"),
+                0,
+                r#"{"timestamp": "2025-08-01T10:02:00Z", "message": "file1 line1"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("file2.log"),
+                0,
+                r#"{"timestamp": "2025-08-01T10:01:00Z", "message": "file2 line1"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("file1.log"),
+                1,
+                r#"{"timestamp": "2025-08-01T10:03:00Z", "message": "file1 line2"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("file2.log"),
+                1,
+                r#"{"timestamp": "2025-08-01T10:00:30Z", "message": "file2 line2"}"#.to_string(),
+            ),
+        ];
+
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Should be sorted chronologically regardless of file
+        assert_eq!(extract_msg(&sorted[0]), "file2 line2");
+        assert_eq!(extract_msg(&sorted[1]), "file2 line1");
+        assert_eq!(extract_msg(&sorted[2]), "file1 line1");
+        assert_eq!(extract_msg(&sorted[3]), "file1 line2");
+    }
+
+    #[test]
+    fn test_mixed_timestamped_and_non_timestamped() {
+        use std::path::PathBuf;
+
+        // Mix of timestamped and non-timestamped lines
+        let lines = vec![
+            (
+                PathBuf::from("file1.log"),
+                0,
+                r#"{"message": "no timestamp 1"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("file2.log"),
+                0,
+                r#"{"timestamp": "2025-08-01T10:01:00Z", "message": "timestamped"}"#.to_string(),
+            ),
+            (
+                PathBuf::from("file1.log"),
+                1,
+                r#"{"message": "no timestamp 2"}"#.to_string(),
+            ),
+        ];
+
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Timestamped lines should come first, then non-timestamped in file order
+        assert_eq!(extract_msg(&sorted[0]), "timestamped");
+        assert_eq!(extract_msg(&sorted[1]), "no timestamp 1");
+        assert_eq!(extract_msg(&sorted[2]), "no timestamp 2");
+    }
+
+    #[test]
+    fn test_multiple_files_preserve_file_order_for_non_timestamped() {
+        use std::path::PathBuf;
+
+        // Non-timestamped lines from multiple files
+        let lines = vec![
+            (PathBuf::from("b.log"), 1, r#"{"message": "b file line 2"}"#.to_string()),
+            (PathBuf::from("a.log"), 0, r#"{"message": "a file line 1"}"#.to_string()),
+            (PathBuf::from("b.log"), 0, r#"{"message": "b file line 1"}"#.to_string()),
+            (PathBuf::from("a.log"), 1, r#"{"message": "a file line 2"}"#.to_string()),
+        ];
+
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Should be sorted by file path, then line number
+        assert_eq!(extract_msg(&sorted[0]), "a file line 1");
+        assert_eq!(extract_msg(&sorted[1]), "a file line 2");
+        assert_eq!(extract_msg(&sorted[2]), "b file line 1");
+        assert_eq!(extract_msg(&sorted[3]), "b file line 2");
+    }
+
+    #[test]
+    fn test_edge_case_empty_input() {
+        let mut lines: Vec<SourcedLine<'_>> = vec![];
+        lines.sort_by_key(|xs| xs.sort_key());
+        assert_eq!(lines.len(), 0);
+    }
+
+    #[test]
+    fn test_edge_case_invalid_json() {
+        use std::path::PathBuf;
+
+        // Invalid JSON should be treated as non-timestamped
+        let lines = vec![
+            (PathBuf::from("test.log"), 0, "not json at all".to_string()),
+            (
+                PathBuf::from("test.log"),
+                1,
+                r#"{"timestamp": "2025-08-01T10:01:00Z", "message": "valid"}"#.to_string(),
+            ),
+        ];
+
+        let mut sorted: Vec<SourcedLine<'_>> = lines
+            .iter()
+            .map(|xs| {
+                let input = (xs.0.clone(), xs.1 as usize, xs.2.as_str());
+                SourcedLine::from(input)
+            })
+            .collect();
+        sorted.sort_by_key(|xs| xs.sort_key());
+
+        // Valid timestamped line should come first
+        assert_eq!(extract_msg(&sorted[0]), "valid");
+        assert_eq!(extract_msg(&sorted[1]), "not json at all");
     }
 }
