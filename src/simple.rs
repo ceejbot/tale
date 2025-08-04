@@ -13,6 +13,33 @@ use bytes::BytesMut;
 use crate::constants::*;
 use crate::{config, process_line, strip_line_ending};
 
+/// Entry point for processing stdin all the ways we need to handle it.
+pub fn handle_stdin() -> anyhow::Result<()> {
+    let offset = config::offset();
+    let offset_unit = config::offset_unit();
+
+    let mut processor = StdinProcessor::new();
+
+    if offset == 0 {
+        return processor.tail();
+    }
+
+    match (offset.is_positive(), offset_unit) {
+        // Positive offsets: skip first N units
+        (true, config::Offset::Lines) => processor.skip_lines(offset as u64),
+        (true, config::Offset::Bytes) => processor.skip_bytes(offset as u64),
+        (true, config::Offset::Blocks) => {
+            let bytes_to_skip = (offset as u64) * BLOCK_SIZE;
+            processor.skip_bytes(bytes_to_skip)
+        }
+
+        // Negative offsets: show last N units
+        (false, config::Offset::Lines) => processor.backtrack_lines((-offset) as u64),
+        (false, config::Offset::Bytes) => processor.backtrack_bytes((-offset) as u64),
+        (false, config::Offset::Blocks) => processor.backtrack_bytes(((-offset) as u64) * BLOCK_SIZE),
+    }
+}
+
 /// Handles common stdin processing patterns with automatic flushing and tailing
 /// support
 pub struct StdinProcessor<'a> {
@@ -84,30 +111,37 @@ impl<'a> StdinProcessor<'a> {
     /// We have a partial buffer left over from a read. Seek back,
     /// then continue processing.
     pub fn handle_overshoot(&mut self, overshoot: &[u8]) -> anyhow::Result<()> {
-        // Convert initial bytes to string and process any complete lines
-        let initial_str = String::from_utf8_lossy(overshoot);
-        let mut remaining = initial_str.as_ref();
-
-        // Process any complete lines in the initial bytes
-        // I don't like this _at all_. Should be using byte ops.
-        while let Some(pos) = remaining.find('\n') {
-            let complete_line = &remaining[..pos];
-            self.process_line(complete_line)?;
-            remaining = &remaining[pos + 1..];
+        // Process any complete lines in the overshoot buffer using byte operations
+        let mut start = 0;
+        for (i, &byte) in overshoot.iter().enumerate() {
+            if byte == b'\n' {
+                // Found a complete line
+                let line_bytes = &overshoot[start..i];
+                let line = String::from_utf8_lossy(line_bytes);
+                self.process_line(&line)?;
+                start = i + 1;
+            }
         }
 
         // If there's a partial line remaining, add it to our line buffer
-        if !remaining.is_empty() {
-            self.line.push_str(remaining);
+        if start < overshoot.len() {
+            let remaining_bytes = &overshoot[start..];
+            let remaining_str = String::from_utf8_lossy(remaining_bytes);
+            self.line.push_str(&remaining_str);
+        }
+
+        // Read the rest of the partial line (if any)
+        if !self.line.is_empty() && self.inlock.read_line(&mut self.line)? > 0 {
+            strip_line_ending(&mut self.line);
+            self.process_line(&self.line().to_string())?;
         }
 
         // Now process the rest normally
-        // TODO replace this func
-        // process_remaining_stdin(inlock, line)
         self.tail()
     }
 
-    /// Enter normal processing mode - process input until EOF, then poll for more
+    /// Enter normal processing mode - process input until EOF, then poll for
+    /// more
     pub fn tail(&mut self) -> anyhow::Result<()> {
         self.process_to_end()?;
         if !config::tailing() {
@@ -148,9 +182,8 @@ impl<'a> StdinProcessor<'a> {
         self.tail()
     }
 
+    // skip bytes then keep going, tailing if config says to tail
     pub fn skip_bytes(&mut self, to_skip: u64) -> anyhow::Result<()> {
-        // skip bytes then keep going, tailing if config says to tail
-
         let mut buffer = [0u8; READ_BUFFER_SIZE];
         let mut bytes_skipped = 0u64;
 
@@ -176,15 +209,98 @@ impl<'a> StdinProcessor<'a> {
         self.tail()
     }
 
-    /// Get mutable access to stdin lock for advanced operations
-    pub fn stdin_lock(&mut self) -> &mut io::StdinLock<'a> {
-        &mut self.inlock
+    pub fn backtrack_bytes(&mut self, bytes_to_show: u64) -> anyhow::Result<()> {
+        let mut circular_buffer = CircularByteBuffer::new(bytes_to_show as usize);
+
+        // Read all input into circular buffer
+        loop {
+            let bytes_read = self.inlock.read(&mut self.buffer)?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+            circular_buffer.write(&mut self.buffer[..bytes_read]);
+        }
+
+        // Check if we have any data
+        if circular_buffer.is_empty() {
+            return Ok(()); // No input
+        }
+
+        let mut overshoot: Vec<u8> = Vec::new();
+        let output_bytes = circular_buffer.extract_last_bytes();
+        let process_this = match find_last_char(output_bytes.as_slice(), b'\n') {
+            Some(last_line_ending) => {
+                overshoot = output_bytes[last_line_ending + 1..].to_vec();
+                output_bytes[..last_line_ending].to_vec()
+            }
+            None => output_bytes[..].to_vec(),
+        };
+
+        // Process the output bytes line by line
+        let output_str = String::from_utf8_lossy(&process_this);
+        for line in output_str.lines() {
+            self.process_line(line)?;
+        }
+        // if we have anything left over, we need to handle the overshoot
+        if !overshoot.is_empty() {
+            self.handle_overshoot(overshoot.as_slice())
+        } else {
+            self.tail()
+        }
     }
 
     /// Get the current line as a mutable reference
     pub fn line_mut(&mut self) -> &mut String {
         &mut self.line
     }
+
+    /// Show last N lines from stdin (adaptive approach with circular buffer)
+    pub fn backtrack_lines(&mut self, lines_to_show: u64) -> anyhow::Result<()> {
+        use std::collections::VecDeque;
+
+        let mut line_buffer: VecDeque<String> = VecDeque::with_capacity(lines_to_show as usize);
+        let mut memory_used = 0usize;
+
+        // Read all input, keeping only the last N lines
+        loop {
+            let bytes_read = self.read_line()?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+
+            // Add to circular buffer
+            if line_buffer.len() >= lines_to_show as usize {
+                // Remove oldest line and update memory usage
+                if let Some(old_line) = line_buffer.pop_front() {
+                    memory_used -= old_line.len();
+                }
+            }
+
+            memory_used += self.line.len();
+            line_buffer.push_back(self.line.clone());
+
+            // Check memory limit - if exceeded, we would need temp file fallback
+            // For now, just warn and continue (temp file implementation would go here)
+            if memory_used > MEMORY_LIMIT_BYTES {
+                eprintln!(
+                    "Warning: Memory limit exceeded for line buffering. Consider using byte/block offsets for large inputs."
+                );
+                // TODO implement temp files feature here
+            }
+        }
+
+        // Output the buffered lines
+        for buffered_line in line_buffer {
+            self.process_line(&buffered_line)?;
+        }
+        self.flush()?;
+
+        Ok(())
+    }
+}
+
+fn find_last_char(buffer: &[u8], c: u8) -> Option<usize> {
+    buffer.iter().rposition(|&b| b == c)
 }
 
 /// Circular buffer for efficiently storing and retrieving the last N bytes
@@ -246,236 +362,6 @@ impl CircularByteBuffer {
     pub fn total_written(&self) -> u64 {
         self.total_read
     }
-}
-
-pub fn handle_stdin() -> anyhow::Result<()> {
-    let offset = config::offset();
-    let offset_unit = config::offset_unit();
-
-    let mut processor = StdinProcessor::new();
-
-    // Original no-offset implementation
-    if offset == 0 {
-        return processor.tail();
-    }
-
-    match (offset.is_positive(), offset_unit) {
-        // Positive offsets: skip first N units
-        (true, config::Offset::Lines) => processor.skip_lines(offset as u64),
-        (true, config::Offset::Bytes) => processor.skip_bytes(offset as u64),
-        (true, config::Offset::Blocks) => {
-            let bytes_to_skip = (offset as u64) * BLOCK_SIZE;
-            processor.skip_bytes(bytes_to_skip)
-        }
-
-        // Negative offsets: show last N units
-        (false, config::Offset::Lines) => process_negative_line_offset((-offset) as u64),
-        (false, config::Offset::Bytes) => process_negative_byte_offset((-offset) as u64),
-        (false, config::Offset::Blocks) => process_negative_block_offset((-offset) as u64),
-    }
-}
-
-/// Skip first N bytes, then process normally
-fn process_positive_byte_offset(bytes_to_skip: u64) -> anyhow::Result<()> {
-    let mut inlock = io::stdin().lock();
-    let mut buffer = [0u8; READ_BUFFER_SIZE];
-    let mut bytes_skipped = 0u64;
-
-    // Skip the requested number of bytes
-    while bytes_skipped < bytes_to_skip {
-        let bytes_read = inlock.read(&mut buffer)?;
-        if bytes_read == 0 {
-            // EOF reached before skipping enough bytes - nothing to output
-            return Ok(());
-        }
-
-        let bytes_to_consume = std::cmp::min(bytes_read as u64, bytes_to_skip - bytes_skipped);
-        bytes_skipped += bytes_to_consume;
-
-        // If we read more than we needed to skip, we need to handle the overshoot
-        if bytes_skipped == bytes_to_skip && bytes_to_consume < bytes_read as u64 {
-            let overshoot_start = bytes_to_consume as usize;
-            let overshoot = &buffer[overshoot_start..bytes_read];
-
-            // Process the overshoot data line by line
-            return process_remaining_stdin_with_initial_bytes(inlock, overshoot);
-        }
-    }
-
-    // Process remaining input normally (no overshoot)
-    let line = String::with_capacity(LINE_CAPACITY);
-    process_remaining_stdin(inlock, line)
-}
-
-/// Process remaining stdin input normally (helper function)
-fn process_remaining_stdin(mut inlock: io::StdinLock<'_>, mut line: String) -> anyhow::Result<()> {
-    let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-    let mut outlock = io::stdout().lock();
-    let tail = config::tailing();
-    let mut count: u16 = 0;
-
-    // Process remaining input until EOF
-    while inlock.read_line(&mut line)? != 0 {
-        strip_line_ending(&mut line);
-        process_line(&line, &mut buffer, &mut outlock)?;
-        count += 1;
-        if count >= FLUSH_LINE_COUNT {
-            outlock.flush()?;
-            count = 0;
-        }
-        line.clear();
-    }
-    outlock.flush()?;
-
-    if !tail {
-        return Ok(());
-    }
-
-    // Tail mode: continue polling for new input
-    let mut last_flush = Instant::now();
-    loop {
-        std::thread::sleep(Duration::from_millis(100));
-
-        match inlock.read_line(&mut line)? {
-            0 => continue, // EOF - keep polling
-            _ => {
-                strip_line_ending(&mut line);
-                process_line(&line, &mut buffer, &mut outlock)?;
-                if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                    outlock.flush()?;
-                    last_flush = Instant::now();
-                }
-                line.clear();
-            }
-        }
-    }
-}
-
-/// Process remaining stdin with some initial bytes from byte offset overshoot
-fn process_remaining_stdin_with_initial_bytes(inlock: io::StdinLock<'_>, initial_bytes: &[u8]) -> anyhow::Result<()> {
-    let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-    let mut outlock = io::stdout().lock();
-    let mut line = String::with_capacity(LINE_CAPACITY);
-    let mut count: u16 = 0;
-
-    // Convert initial bytes to string and process any complete lines
-    let initial_str = String::from_utf8_lossy(initial_bytes);
-    let mut remaining = initial_str.as_ref();
-
-    // Process any complete lines in the initial bytes
-    while let Some(newline_pos) = remaining.find('\n') {
-        let complete_line = &remaining[..newline_pos];
-        process_line(complete_line, &mut buffer, &mut outlock)?;
-        count += 1;
-        if count >= FLUSH_LINE_COUNT {
-            outlock.flush()?;
-            count = 0;
-        }
-        remaining = &remaining[newline_pos + 1..];
-    }
-
-    // If there's a partial line remaining, add it to our line buffer
-    if !remaining.is_empty() {
-        line.push_str(remaining);
-    }
-
-    // Now process the rest normally
-    process_remaining_stdin(inlock, line)
-}
-
-/// Show last N bytes from stdin (circular buffer approach)
-fn process_negative_byte_offset(bytes_to_show: u64) -> anyhow::Result<()> {
-    let mut inlock = io::stdin().lock();
-    let mut circular_buffer = CircularByteBuffer::new(bytes_to_show as usize);
-    let mut buffer = [0u8; READ_BUFFER_SIZE];
-
-    // Read all input into circular buffer
-    loop {
-        let bytes_read = inlock.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break; // EOF
-        }
-        circular_buffer.write(&buffer[..bytes_read]);
-    }
-
-    // Check if we have any data
-    if circular_buffer.is_empty() {
-        return Ok(()); // No input
-    }
-
-    // Output from circular buffer
-    let mut outlock = io::stdout().lock();
-    let mut output_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-
-    // Extract and process the last bytes
-    let output_bytes = circular_buffer.extract_last_bytes();
-
-    // Process the output bytes line by line
-    let output_str = String::from_utf8_lossy(&output_bytes);
-    for line in output_str.lines() {
-        process_line(line, &mut output_buffer, &mut outlock)?;
-    }
-    outlock.flush()?;
-
-    Ok(())
-}
-
-/// Show last N blocks (N * 512 bytes) from stdin
-fn process_negative_block_offset(blocks_to_show: u64) -> anyhow::Result<()> {
-    let bytes_to_show = blocks_to_show * BLOCK_SIZE;
-    process_negative_byte_offset(bytes_to_show)
-}
-
-/// Show last N lines from stdin (adaptive approach with circular buffer)
-fn process_negative_line_offset(lines_to_show: u64) -> anyhow::Result<()> {
-    use std::collections::VecDeque;
-
-    let mut inlock = io::stdin().lock();
-    let mut line_buffer: VecDeque<String> = VecDeque::with_capacity(lines_to_show as usize);
-    let mut line = String::with_capacity(LINE_CAPACITY);
-    let mut memory_used = 0usize;
-
-    // Read all input, keeping only the last N lines
-    loop {
-        line.clear();
-        let bytes_read = inlock.read_line(&mut line)?;
-        if bytes_read == 0 {
-            break; // EOF
-        }
-
-        strip_line_ending(&mut line);
-
-        // Add to circular buffer
-        if line_buffer.len() >= lines_to_show as usize {
-            // Remove oldest line and update memory usage
-            if let Some(old_line) = line_buffer.pop_front() {
-                memory_used -= old_line.len();
-            }
-        }
-
-        memory_used += line.len();
-        line_buffer.push_back(line.clone());
-
-        // Check memory limit - if exceeded, we would need temp file fallback
-        // For now, just warn and continue (temp file implementation would go here)
-        if memory_used > MEMORY_LIMIT_BYTES {
-            eprintln!(
-                "Warning: Memory limit exceeded for line buffering. Consider using byte/block offsets for large inputs."
-            );
-            // TODO implement temp files feature here
-        }
-    }
-
-    // splort out our buffered lines
-    let mut outlock = io::stdout().lock();
-    let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-
-    for buffered_line in line_buffer {
-        process_line(&buffered_line, &mut buffer, &mut outlock)?;
-    }
-    outlock.flush()?;
-
-    Ok(())
 }
 
 pub fn handle_file(fpath: &PathBuf) -> anyhow::Result<()> {
@@ -782,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn test_line_buffer_circular_logic() {
+    fn circular_line_logic() {
         use std::collections::VecDeque;
 
         // Test VecDeque circular behavior for line buffering
@@ -804,29 +690,79 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_usage_calculation() {
-        use std::collections::VecDeque;
+    fn test_find_last_char() {
+        // Test normal case
+        assert_eq!(find_last_char(b"hello\nworld\n", b'\n'), Some(11));
+        assert_eq!(find_last_char(b"hello\nworld", b'\n'), Some(5));
 
-        // Test memory usage tracking for line buffer
-        let mut line_buffer: VecDeque<String> = VecDeque::new();
-        let mut memory_used = 0usize;
+        // Test no match
+        assert_eq!(find_last_char(b"hello world", b'\n'), None);
 
-        let test_lines = vec!["short", "a bit longer line", "tiny"];
+        // Test empty buffer
+        assert_eq!(find_last_char(b"", b'\n'), None);
 
-        for line in &test_lines {
-            memory_used += line.len();
-            line_buffer.push_back(line.to_string());
+        // Test single character
+        assert_eq!(find_last_char(b"\n", b'\n'), Some(0));
+        assert_eq!(find_last_char(b"a", b'\n'), None);
+
+        // Test multiple occurrences
+        assert_eq!(find_last_char(b"\n\n\n", b'\n'), Some(2));
+    }
+
+    #[test]
+    fn circular_buffer_edge_cases() {
+        // Test buffer exactly at capacity
+        let mut buffer = CircularByteBuffer::new(5);
+        buffer.write(b"12345");
+        assert_eq!(buffer.extract_last_bytes(), b"12345");
+
+        // Test buffer overflow
+        buffer.write(b"67890");
+        assert_eq!(buffer.extract_last_bytes(), b"67890");
+
+        // Test partial writes
+        let mut buffer2 = CircularByteBuffer::new(10);
+        buffer2.write(b"abc");
+        assert_eq!(buffer2.extract_last_bytes(), b"abc");
+
+        // Test multiple small writes
+        buffer2.write(b"def");
+        buffer2.write(b"ghi");
+        assert_eq!(buffer2.extract_last_bytes(), b"abcdefghi");
+    }
+
+    #[test]
+    fn test_backtrack_bytes_partial_line_handling() {
+        // Test that backtrack_bytes properly handles partial lines at the end
+        // This tests the logic without actual I/O
+
+        // Case 1: Buffer ends with newline
+        let buffer_with_newline = b"line1\nline2\nline3\n";
+        assert_eq!(find_last_char(buffer_with_newline, b'\n'), Some(17));
+
+        // Case 2: Buffer doesn't end with newline
+        let buffer_without_newline = b"line1\nline2\nline3";
+        assert_eq!(find_last_char(buffer_without_newline, b'\n'), Some(11));
+
+        // Case 3: Buffer with no newlines
+        let buffer_no_newlines = b"single long line without newlines";
+        assert_eq!(find_last_char(buffer_no_newlines, b'\n'), None);
+    }
+
+    #[test]
+    fn test_overshoot_handling_logic() {
+        // Test the overshoot parsing logic
+        let overshoot = b"partial line\ncomplete line\nanother";
+        let overshoot_str = String::from_utf8_lossy(overshoot);
+        let mut remaining = overshoot_str.as_ref();
+        let mut complete_lines = Vec::new();
+
+        while let Some(pos) = remaining.find('\n') {
+            complete_lines.push(&remaining[..pos]);
+            remaining = &remaining[pos + 1..];
         }
 
-        let expected_memory = test_lines.iter().map(|s| s.len()).sum::<usize>();
-        assert_eq!(memory_used, expected_memory);
-
-        // Test memory usage after removing a line
-        if let Some(removed) = line_buffer.pop_front() {
-            memory_used -= removed.len();
-        }
-
-        let remaining_memory = test_lines[1..].iter().map(|s| s.len()).sum::<usize>();
-        assert_eq!(memory_used, remaining_memory);
+        assert_eq!(complete_lines, vec!["partial line", "complete line"]);
+        assert_eq!(remaining, "another");
     }
 }

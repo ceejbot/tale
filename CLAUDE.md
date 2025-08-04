@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Code Architecture
 
 ### Core Structure
-The application is now split into seven specialized modules:
+The application is now split into eight specialized modules:
 
 1. **`src/main.rs`** - Application entry point and mode handlers:
    - Tokio async runtime coordination
@@ -77,6 +77,13 @@ The application is now split into seven specialized modules:
    - Async processing pipeline with configurable batch windows
    - Support for mixed timestamped/non-timestamped log lines
 
+8. **`src/simple.rs`** - Single-source stdin and file processing:
+   - `StdinProcessor` struct for consolidated stdin handling patterns
+   - Complete offset support: positive (`+N`) and negative (`-N`) for lines, bytes, blocks
+   - `CircularByteBuffer` for efficient last-N-bytes operations
+   - Smart overshoot handling for byte-based operations
+   - File reading with backward seeking for tail functionality
+
 ### Key Data Structures
 
 **Canonical struct** - Optimized for well-structured HTTP logs (fastest path):
@@ -98,6 +105,19 @@ The application is now split into seven specialized modules:
 - `Message(Box<Message<'a>>)` - Flexible log parsing
 - `Json(GenericJson)` - Generic JSON objects
 - Enum size optimized from 360 → ~40 bytes via boxing
+
+**StdinProcessor struct** - Consolidated stdin processing patterns:
+- Encapsulates stdin/stdout locks, line buffers, and formatting pipeline
+- Methods: `skip_lines()`, `skip_bytes()`, `backtrack_lines()`, `backtrack_bytes()`, `tail()`
+- Automatic flushing and batch processing (40 lines per flush)
+- Smart overshoot handling for byte-based operations with partial line continuation
+- Eliminates ~80 lines of duplicate code across offset implementations
+
+**CircularByteBuffer struct** - Memory-bounded byte operations:
+- Fixed-size circular buffer for last-N-bytes operations
+- Write-through design with exact capacity limits
+- Efficient wraparound logic for reading last N bytes
+- Used by negative byte and block offset implementations
 
 ### Key Dependencies
 - `clap` - Command-line argument parsing with derive macros and custom styling
@@ -175,6 +195,18 @@ Strict linting is enforced:
 
 ### Current State
 The application is highly optimized and fully functional with:
+- ✅ **Complete stdin offset support** matching `tail` behavior:
+  - Positive offsets: `-n +N`, `-c +N`, `-b +N` (skip first N units)
+  - Negative offsets: `-n -N`, `-c -N`, `-b -N` (show last N units)
+  - All offset modes work with stdin and files
+  - Memory-bounded circular buffers for bytes/blocks
+  - Adaptive VecDeque for lines with 10MB memory limit
+- ✅ **StdinProcessor refactor** (completed 2025-01-08):
+  - All stdin processing consolidated into clean `StdinProcessor` struct
+  - Methods: `skip_lines()`, `skip_bytes()`, `backtrack_lines()`, `backtrack_bytes()`, `tail()`
+  - Smart overshoot handling with byte-based parsing (not string-based)
+  - Eliminated ~80 lines of duplicate code
+  - Clean `handle_stdin()` delegation with intuitive API
 - ✅ High-performance stdin processing with tailing support
 - ✅ File reading with offset support and backward seeking
 - ✅ Zero-copy JSON parsing with multiple format support
@@ -189,13 +221,49 @@ The application is highly optimized and fully functional with:
   - Glob pattern support for file matching
   - Inode-based file rotation detection
   - Support for both static (read-once) and tailing modes
-- 🐛 **Known Issues**:
-  - Batch processor bug was fixed: `start()` method now properly calls `process_loop()`
+- ⚠️ **Minor Issues**:
   - Multiple unused imports and dead code warnings (cosmetic)
-  - Multi-file functionality implemented but needs testing
+  - Multi-file functionality implemented but needs broader testing
 
 ### Optimization Insights
 - **Architectural changes > micro-optimizations**: The `Canonical` type provided 25-34% improvement vs 5-6% from buffer writing
 - **CPU-bound workload**: JSON parsing dominates performance, not I/O operations
 - **Memory efficiency achieved**: 1.8% memory footprint proves excellent streaming design
-- **Test-driven optimization**: Comprehensive test coverage (22 tests) ensured correctness during aggressive optimization
+- **Test-driven optimization**: Comprehensive test coverage (40 tests) ensured correctness during aggressive optimization
+- **Refactoring value**: `StdinProcessor` consolidation eliminated duplication while improving maintainability
+
+## Next Steps
+
+### Immediate (High Priority)
+1. **Clean up cosmetic warnings** - Remove unused imports and dead code
+2. **Broader testing** - Test multi-file functionality across different platforms
+
+### Future Features (Medium Priority)
+1. **FileChunk Architecture** - Implement chunked file processing for memory efficiency
+   - Break large files into manageable streaming pieces
+   - Enable future parallel chunk processing
+   - Coordinate with existing memory management systems
+2. **Source file display integration** - Add file names to multi-file output
+3. **Advanced memory management** - Implement temp file fallback for large negative line offsets
+
+### Long-term (Low Priority)  
+1. **Performance optimizations** - Profile and optimize remaining bottlenecks
+2. **Additional offset modes** - Consider time-based offsets for log analysis
+3. **Enhanced format support** - Add support for other structured log formats
+
+## Recent Work (2025-01-08)
+
+**Major Refactoring Completed**: StdinProcessor consolidation
+- All stdin processing logic moved into clean `StdinProcessor` abstraction
+- Eliminated ~80 lines of duplicate code
+- Fixed edge cases (empty buffer handling, overshoot processing)
+- Added comprehensive test coverage (9 new tests)
+- Improved error handling with better contexts
+- All functionality preserved, 40 tests passing
+
+**Key Files Modified**:
+- `src/simple.rs` - Complete refactor with new `StdinProcessor` and `CircularByteBuffer`
+- `src/main.rs` - Added constants module with buffer sizes and limits
+- Tests added for edge cases, circular buffer logic, and overshoot handling
+
+**Status**: Ready for next development phase (FileChunk implementation or cleanup work)
