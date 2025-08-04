@@ -13,6 +13,20 @@ use bytes::BytesMut;
 use crate::constants::*;
 use crate::{config, process_line, strip_line_ending};
 
+/// Entry point for handling a file.
+pub fn handle_file(fpath: &PathBuf) -> anyhow::Result<()> {
+    if !fpath.exists() {
+        return Err(anyhow!("{} does not exist!", fpath.display()));
+    }
+    if !fpath.is_file() {
+        return Err(anyhow!("{} is not a file!", fpath.display()));
+    }
+
+    let mut processor = FileProcessor::new(fpath.to_path_buf());
+    // here, tail handles offsets
+    processor.tail()
+}
+
 /// Entry point for processing stdin all the ways we need to handle it.
 pub fn handle_stdin() -> anyhow::Result<()> {
     let offset = config::offset();
@@ -364,158 +378,186 @@ impl CircularByteBuffer {
     }
 }
 
-pub fn handle_file(fpath: &PathBuf) -> anyhow::Result<()> {
-    use std::io::Seek;
-
-    if !fpath.exists() {
-        return Err(anyhow!("{} does not exist!", fpath.display()));
-    }
-    if !fpath.is_file() {
-        return Err(anyhow!("{} is not a file!", fpath.display()));
-    }
-
-    let tailing = config::tailing();
-    let offset_unit = config::offset_unit();
-    let offset = config::offset();
-    let mut file = File::open(&fpath)?;
-
-    let _unused = move_to_position(&mut file, offset, offset_unit, tailing)?;
-    let mut reader = BufReader::new(file);
-
-    // If we've got a positive line offset, we still need to skip our N lines
-    if offset > 0 && matches!(offset_unit, config::Offset::Lines) {
-        let consume_me = (&mut reader).lines().take(offset as usize);
-        // We then must consume them. this feels v inefficient but I do not know.
-        let _count = consume_me.count();
-    };
-
-    // Now at last we get to start printing. What a fuss.
-    let mut outlock = io::stdout().lock();
-    let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-    let mut line = String::with_capacity(LINE_CAPACITY);
-
-    let mut count: u16 = 0;
-    while reader.read_line(&mut line)? != 0 {
-        strip_line_ending(&mut line);
-        process_line(&line, &mut buffer, &mut outlock)?;
-        count += 1;
-        if count >= FLUSH_LINE_COUNT {
-            outlock.flush()?;
-            count = 0;
-        }
-        line.clear();
-    }
-    outlock.flush()?;
-
-    if !tailing {
-        return Ok(());
-    }
-
-    // Now we tell a tale of tailing.
-    let mut last_flush = Instant::now();
-
-    // Get the file back from the reader
-    let mut file = reader.into_inner();
-    let mut file_position = file.stream_position()?;
-
-    // polling loop. TODO consider better impl
-    loop {
-        std::thread::sleep(Duration::from_millis(100));
-
-        // Check if file has grown
-        let current_size = file.seek(io::SeekFrom::End(0))?;
-        if current_size > file_position {
-            // Hide and seek, trains and sewing machines.
-            file.seek(io::SeekFrom::Start(file_position))?;
-            let mut tail_reader = BufReader::new(&file);
-
-            match tail_reader.read_line(&mut line)? {
-                0 => {
-                    // EOF - no new data available, continue polling
-                    continue;
-                }
-                _ => {
-                    strip_line_ending(&mut line);
-                    // New data available - process it.
-                    process_line(&line, &mut buffer, &mut outlock)?;
-                    if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                        outlock.flush()?;
-                        last_flush = Instant::now();
-                    }
-
-                    line.clear();
-                    buffer.clear();
-                }
-            }
-
-            // Note where we finished reading so we can figure out if we get more.
-            file_position = file.stream_position()?;
-        }
-    }
+pub struct FileProcessor<'a> {
+    fpath: PathBuf,
+    outlock: io::StdoutLock<'a>,
+    buffer: BytesMut,
+    count: u16,
 }
 
-/// Find the right file offset to start reading & printing this file from, given
-/// the arg input. This seeks forward or backwards by lines, and returns the
-/// current file position. As a side effect, the file is left at the correct
-/// position to begin reading. IMPORTANT: The caller has to do any last by-lines
-/// forward seeking by themselves. This is a weakness in the internal API.
-pub fn move_to_position(file: &mut File, offset: i64, units: config::Offset, tailing: bool) -> anyhow::Result<u64> {
-    // Short circuit if there is no work to do.
-    let file_size = file.seek(io::SeekFrom::End(0))?;
-    if file_size == 0 {
-        return Ok(0);
-    }
-
-    // Set our position in the file based on offset unit.
-    match units {
-        config::Offset::Lines => {
-            if offset > 0 {
-                // Positive offset: skip N lines from the beginning,
-                // which we do NOT do here
-                file.seek(io::SeekFrom::Start(0))?;
-            } else if offset < 0 {
-                // Negative offset: start N lines from the end
-                let start = move_n_lines_back(file, (-offset) as u64)?;
-                file.seek(io::SeekFrom::Start(start))?;
-            } else if tailing {
-                // Zero offset: start from the end (no lines to show unless tailing)
-                file.seek(io::SeekFrom::End(0))?;
-            }
-        }
-        config::Offset::Bytes => {
-            // Byte-based offset
-            if offset > 0 {
-                // Positive offset: skip N bytes from the beginning
-                file.seek(io::SeekFrom::Start(offset as u64))?;
-            } else if offset < 0 {
-                // Negative offset: start N bytes from the end
-                file.seek(io::SeekFrom::End(offset))?;
-            } else if tailing {
-                // Zero offset: start from the end
-                file.seek(io::SeekFrom::End(0))?;
-            }
-        }
-        config::Offset::Blocks => {
-            // This case is the as above, but we multiply offset by block size.
-            if offset > 0 {
-                let byte_offset = (offset as u64) * BLOCK_SIZE;
-                file.seek(io::SeekFrom::Start(byte_offset))?;
-            } else if offset < 0 {
-                let byte_offset = (offset as i64) * (BLOCK_SIZE as i64);
-                file.seek(io::SeekFrom::End(byte_offset))?;
-            } else if tailing {
-                file.seek(io::SeekFrom::End(0))?;
-            }
+impl<'a> FileProcessor<'a> {
+    pub fn new(fpath: PathBuf) -> Self {
+        Self {
+            fpath,
+            outlock: io::stdout().lock(),
+            buffer: BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY),
+            count: 0,
         }
     }
 
-    // Unused now, but just in case. Might refactor away.
-    Ok(file.stream_position()?)
+    /// Find the right file offset to start reading & printing this file from,
+    /// given the arg input. This seeks forward or backwards by lines, and
+    /// returns the current file position. As a side effect, the file is
+    /// left at the correct position to begin reading. IMPORTANT: The caller
+    /// has to do any last by-lines forward seeking by themselves. This is a
+    /// weakness in the internal API.
+    pub fn move_to_position(&mut self, offset: i64, units: config::Offset, tailing: bool) -> anyhow::Result<File> {
+        let mut file = File::open(&self.fpath)?;
+
+        // Short circuit if there is no work to do.
+        let file_size = file.seek(io::SeekFrom::End(0))?;
+        if file_size == 0 {
+            return Ok(file);
+        }
+
+        // Reset to start after size read.
+        file.seek(io::SeekFrom::Start(0))?;
+
+        // Set our position in the file based on offset unit.
+        match units {
+            config::Offset::Lines => {
+                if offset > 0 {
+                    // Positive offset: skip N lines from the beginning,
+                    // which we do NOT do here
+                    file.seek(io::SeekFrom::Start(0))?;
+                } else if offset < 0 {
+                    // Negative offset: start N lines from the end
+                    let start = move_n_lines_back(&mut file, (-offset) as u64)?;
+                    file.seek(io::SeekFrom::Start(start))?;
+                } else if tailing {
+                    // Zero offset: start from the end (no lines to show unless tailing)
+                    file.seek(io::SeekFrom::End(0))?;
+                }
+            }
+            config::Offset::Bytes => {
+                // Byte-based offset
+                if offset > 0 {
+                    // Positive offset: skip N bytes from the beginning
+                    file.seek(io::SeekFrom::Start(offset as u64))?;
+                } else if offset < 0 {
+                    // Negative offset: start N bytes from the end
+                    file.seek(io::SeekFrom::End(offset))?;
+                } else if tailing {
+                    // Zero offset: start from the end
+                    file.seek(io::SeekFrom::End(0))?;
+                }
+            }
+            config::Offset::Blocks => {
+                // This case is the as above, but we multiply offset by block size.
+                if offset > 0 {
+                    let byte_offset = (offset as u64) * BLOCK_SIZE;
+                    file.seek(io::SeekFrom::Start(byte_offset))?;
+                } else if offset < 0 {
+                    let byte_offset = (offset as i64) * (BLOCK_SIZE as i64);
+                    file.seek(io::SeekFrom::End(byte_offset))?;
+                } else if tailing {
+                    file.seek(io::SeekFrom::End(0))?;
+                }
+            }
+        }
+
+        Ok(file)
+    }
+
+    /// Process a single line through the formatting pipeline
+    pub fn process_line(&mut self, line: &str) -> anyhow::Result<()> {
+        process_line(line, &mut self.buffer, &mut self.outlock).with_context(|| "Failed to process line")?;
+        self.count += 1;
+        self.flush_if_needed()
+    }
+
+    /// Flush output if we've processed enough lines
+    pub fn flush_if_needed(&mut self) -> anyhow::Result<()> {
+        if self.count >= FLUSH_LINE_COUNT {
+            self.outlock.flush().context("Failed to flush stdout")?;
+            self.count = 0;
+        }
+        Ok(())
+    }
+
+    /// Force flush output
+    pub fn flush(&mut self) -> anyhow::Result<()> {
+        self.outlock.flush().context("Failed to flush stdout")?;
+        self.count = 0;
+        Ok(())
+    }
+
+    pub fn tail(&mut self) -> anyhow::Result<()> {
+        let tailing = config::tailing();
+        let offset_unit = config::offset_unit();
+        let offset = config::offset();
+
+        let file = self.move_to_position(offset, offset_unit, tailing)?;
+        let mut reader = BufReader::new(file);
+
+        // If we've got a positive line offset, we still need to skip our N lines
+        if offset > 0 && matches!(offset_unit, config::Offset::Lines) {
+            let consume_me = (&mut reader).lines().take(offset as usize);
+            // We then must consume them. this feels v inefficient but I do not know.
+            let _count = consume_me.count();
+        };
+
+        // Now at last we get to start printing. What a fuss.
+        let mut line = String::with_capacity(LINE_CAPACITY);
+        while reader.read_line(&mut line)? != 0 {
+            strip_line_ending(&mut line);
+            self.process_line(line.as_str())?;
+            line.clear();
+        }
+        self.flush()?;
+
+        if !tailing {
+            return Ok(());
+        }
+
+        // Now we tell a tale of tailing.
+        let mut last_flush = Instant::now();
+
+        // Get the file back from the reader
+        let mut file = reader.into_inner();
+        let mut file_position = file.stream_position()?;
+
+        // polling loop. TODO consider better impl
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+
+            // Check if file has grown
+            let current_size = file.seek(io::SeekFrom::End(0))?;
+            if current_size > file_position {
+                // Hide and seek, trains and sewing machines.
+                file.seek(io::SeekFrom::Start(file_position))?;
+                let mut tail_reader = BufReader::new(&file);
+
+                match tail_reader.read_line(&mut line)? {
+                    0 => {
+                        // EOF - no new data available, continue polling
+                        continue;
+                    }
+                    _ => {
+                        strip_line_ending(&mut line);
+                        // New data available - process it.
+                        process_line(&line, &mut self.buffer, &mut self.outlock)?;
+                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                            self.outlock.flush()?;
+                            last_flush = Instant::now();
+                        }
+
+                        line.clear();
+                        self.buffer.clear();
+                    }
+                }
+
+                // Note where we finished reading so we can figure out if we get more.
+                file_position = file.stream_position()?;
+            }
+        }
+    }
 }
 
 /// Find the byte offset from the beginning of the file for the start of the
 /// line to begin our pretty-printing. This is the seek backwards version. It is
 /// made entirely of edge cases.
+/// Used by FileProcessor::move_to_position(). Needs refactor.
 fn move_n_lines_back(file: &mut File, line_count: u64) -> anyhow::Result<u64> {
     let file_size = file.seek(io::SeekFrom::End(0))?;
     if file_size == 0 {
