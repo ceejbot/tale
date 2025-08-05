@@ -422,7 +422,7 @@ impl<'a> FileProcessor<'a> {
                     file.seek(io::SeekFrom::Start(0))?;
                 } else if offset < 0 {
                     // Negative offset: start N lines from the end
-                    let start = move_n_lines_back(&mut file, (-offset) as u64)?;
+                    let start = self.move_n_lines_back(&mut file, (-offset) as u64)?;
                     file.seek(io::SeekFrom::Start(start))?;
                 } else if tailing {
                     // Zero offset: start from the end (no lines to show unless tailing)
@@ -457,6 +457,65 @@ impl<'a> FileProcessor<'a> {
         }
 
         Ok(file)
+    }
+
+    /// Find the byte offset from the beginning of the file for the start of the
+    /// line to begin our pretty-printing. This is the seek backwards version.
+    /// It is made entirely of edge cases. Used only by
+    /// FileProcessor::move_to_position().
+    fn move_n_lines_back(&mut self, file: &mut File, line_count: u64) -> anyhow::Result<u64> {
+        let file_size = file.seek(io::SeekFrom::End(0))?;
+        if file_size == 0 {
+            return Ok(0);
+        }
+
+        const BUFFER_SIZE: usize = 8192;
+        let mut buffer = vec![0u8; BUFFER_SIZE];
+        let mut lines_found = 0u64;
+
+        // First check if the file ends with a newline
+        file.seek(io::SeekFrom::End(-1))?;
+        let mut last_byte = [0u8; 1];
+        file.read_exact(&mut last_byte)?;
+        let ends_with_newline = last_byte[0] == b'\n';
+
+        // To get the last N lines, we need to find the right number of newlines
+        // For a file that doesn't end with newline: last line is after the last newline
+        // For a file that ends with newline: last line is between the last two newlines
+        let target_newlines = if ends_with_newline { line_count } else { line_count - 1 };
+
+        let mut pos = file_size;
+
+        loop {
+            // how much should we read?
+            let chunk_size = std::cmp::min(BUFFER_SIZE as u64, pos) as usize;
+            if chunk_size == 0 {
+                // We've reached the beginning of the file
+                return Ok(0);
+            }
+
+            // Read a chonk. Chunk. Whatever.
+            pos -= chunk_size as u64;
+            file.seek(io::SeekFrom::Start(pos))?;
+            file.read_exact(&mut buffer[..chunk_size])?;
+
+            // Count newlines in reverse order
+            for (i, &byte) in buffer[..chunk_size].iter().enumerate().rev() {
+                if byte == b'\n' {
+                    lines_found += 1;
+                    if lines_found > target_newlines {
+                        // Found enough lines, return position after this newline
+                        return Ok(pos + i as u64 + 1);
+                    }
+                }
+            }
+
+            // We hit the beginning: not enough lines. We start at the very
+            // beginning, a very good place to start.
+            if pos == 0 {
+                return Ok(0);
+            }
+        }
     }
 
     /// Process a single line through the formatting pipeline
@@ -554,65 +613,6 @@ impl<'a> FileProcessor<'a> {
     }
 }
 
-/// Find the byte offset from the beginning of the file for the start of the
-/// line to begin our pretty-printing. This is the seek backwards version. It is
-/// made entirely of edge cases.
-/// Used by FileProcessor::move_to_position(). Needs refactor.
-fn move_n_lines_back(file: &mut File, line_count: u64) -> anyhow::Result<u64> {
-    let file_size = file.seek(io::SeekFrom::End(0))?;
-    if file_size == 0 {
-        return Ok(0);
-    }
-
-    const BUFFER_SIZE: usize = 8192;
-    let mut buffer = vec![0u8; BUFFER_SIZE];
-    let mut lines_found = 0u64;
-
-    // First check if the file ends with a newline
-    file.seek(io::SeekFrom::End(-1))?;
-    let mut last_byte = [0u8; 1];
-    file.read_exact(&mut last_byte)?;
-    let ends_with_newline = last_byte[0] == b'\n';
-
-    // To get the last N lines, we need to find the right number of newlines
-    // For a file that doesn't end with newline: last line is after the last newline
-    // For a file that ends with newline: last line is between the last two newlines
-    let target_newlines = if ends_with_newline { line_count } else { line_count - 1 };
-
-    let mut pos = file_size;
-
-    loop {
-        // how much should we read?
-        let chunk_size = std::cmp::min(BUFFER_SIZE as u64, pos) as usize;
-        if chunk_size == 0 {
-            // We've reached the beginning of the file
-            return Ok(0);
-        }
-
-        // Read a chonk. Chunk. Whatever.
-        pos -= chunk_size as u64;
-        file.seek(io::SeekFrom::Start(pos))?;
-        file.read_exact(&mut buffer[..chunk_size])?;
-
-        // Count newlines in reverse order
-        for (i, &byte) in buffer[..chunk_size].iter().enumerate().rev() {
-            if byte == b'\n' {
-                lines_found += 1;
-                if lines_found > target_newlines {
-                    // Found enough lines, return position after this newline
-                    return Ok(pos + i as u64 + 1);
-                }
-            }
-        }
-
-        // We hit the beginning: not enough lines. We start at the very
-        // beginning, a very good place to start.
-        if pos == 0 {
-            return Ok(0);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,10 +630,14 @@ mod tests {
             .write_all(content.as_bytes())
             .expect("Failed to write to temp file");
 
+        let pathbuf = PathBuf::from(temp_file.path());
+        let mut processor = FileProcessor::new(pathbuf);
         let mut file = File::open(temp_file.path()).expect("Failed to open temp file");
 
         // Test getting last 2 lines (should start after "line3\n")
-        let pos = move_n_lines_back(&mut file, 2).expect("Failed to find position");
+        let pos = processor
+            .move_n_lines_back(&mut file, 2)
+            .expect("Failed to find position");
         file.seek(io::SeekFrom::Start(pos)).expect("Failed to seek");
 
         let mut remaining = String::new();
@@ -641,7 +645,9 @@ mod tests {
         assert_eq!(remaining, "line4\nline5\n");
 
         // Test getting last line (should start after "line4\n")
-        let pos = move_n_lines_back(&mut file, 1).expect("Failed to find position");
+        let pos = processor
+            .move_n_lines_back(&mut file, 1)
+            .expect("Failed to find position");
         file.seek(io::SeekFrom::Start(pos)).expect("Failed to seek");
 
         let mut remaining = String::new();
@@ -649,7 +655,9 @@ mod tests {
         assert_eq!(remaining, "line5\n");
 
         // Test getting more lines than exist (should start from beginning)
-        let pos = move_n_lines_back(&mut file, 10).expect("Failed to find position");
+        let pos = processor
+            .move_n_lines_back(&mut file, 10)
+            .expect("Failed to find position");
         assert_eq!(pos, 0);
     }
 
@@ -657,9 +665,13 @@ mod tests {
     fn seeking_in_empty() {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let pathbuf = PathBuf::from(temp_file.path());
+        let mut processor = FileProcessor::new(pathbuf);
         let mut file = File::open(temp_file.path()).expect("Failed to open temp file");
 
-        let pos = move_n_lines_back(&mut file, 5).expect("Failed to find position");
+        let pos = processor
+            .move_n_lines_back(&mut file, 5)
+            .expect("Failed to find position");
         assert_eq!(pos, 0);
     }
 
