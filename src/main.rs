@@ -3,9 +3,11 @@
 
 mod batch;
 mod config;
+mod errors;
 mod file_state;
 mod logpatterns;
 mod multiplexed;
+mod readers;
 mod simple;
 mod watcher;
 
@@ -94,6 +96,14 @@ struct Args {
     /// Batch window size for multi-file tailing (in milliseconds).
     #[arg(long, default_value = "250")]
     window: u64,
+    /// Force use of chunked file processing for better memory efficiency on
+    /// large files.
+    #[arg(long)]
+    chunked: bool,
+    /// Disable chunked file processing, always use streaming (may use more
+    /// memory).
+    #[arg(long, conflicts_with = "chunked")]
+    no_chunked: bool,
 
     /// Arguments: (offset) [file ...] where offset can be +N, -N, or N.
     #[arg(allow_hyphen_values = true)]
@@ -151,8 +161,19 @@ async fn main() -> anyhow::Result<()> {
 
     let mode = config::mode();
     match mode {
-        InputMode::Stdin => simple::handle_stdin(),
-        InputMode::SingleFile { path } => simple::handle_file(path),
+        InputMode::Stdin => readers::handle_stdin(),
+        InputMode::SingleFile { path } => {
+            // Check if we should use chunked processing
+            let offset = config::offset();
+            let large_offset = offset.abs() > 10_000;
+            let should_use_chunked = config::force_chunked() || (!config::disable_chunked() && large_offset);
+
+            if should_use_chunked {
+                simple::handle_file_chunked(path)
+            } else {
+                simple::handle_file(path)
+            }
+        }
         InputMode::MultiFile { paths } => {
             if args.follow || args.sticky {
                 // Multi-file tailing mode
@@ -177,7 +198,7 @@ mod tests {
 
     #[test]
     fn offset_unit_args() {
-        use crate::config::Offset;
+        use crate::config::OffsetUnit;
         use crate::{Args, ConfigOpts};
 
         // Test bytes offset detection - test the config struct directly
@@ -191,10 +212,12 @@ mod tests {
             verbose: false,
             quiet: false,
             window: 250,
+            chunked: false,
+            no_chunked: false,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);
-        assert!(matches!(config.offset_unit, Offset::Bytes));
+        assert!(matches!(config.offset_unit, OffsetUnit::Bytes));
         assert_eq!(config.offset, 100);
 
         // Test blocks offset detection
@@ -208,10 +231,12 @@ mod tests {
             verbose: false,
             quiet: false,
             window: 250,
+            chunked: false,
+            no_chunked: false,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);
-        assert!(matches!(config.offset_unit, Offset::Blocks));
+        assert!(matches!(config.offset_unit, OffsetUnit::Blocks));
         assert_eq!(config.offset, 2);
 
         // Test lines offset detection (default)
@@ -225,10 +250,12 @@ mod tests {
             verbose: false,
             quiet: false,
             window: 250,
+            chunked: false,
+            no_chunked: false,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);
-        assert!(matches!(config.offset_unit, Offset::Lines));
+        assert!(matches!(config.offset_unit, OffsetUnit::Lines));
         assert_eq!(config.offset, 5);
     }
 }

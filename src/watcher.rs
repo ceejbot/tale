@@ -52,7 +52,7 @@ impl Default for WatcherConfig {
 /// Multi-file watcher using notify and async coordination
 pub struct MultiFileWatcher {
     /// Configuration for this watcher
-    config: WatcherConfig,
+    _config: WatcherConfig,
     /// File state manager
     file_manager: FileStateManager,
     /// Channel for sending watch events
@@ -65,9 +65,9 @@ pub struct MultiFileWatcher {
 
 impl MultiFileWatcher {
     /// Create a new MultiFileWatcher
-    pub fn new(config: WatcherConfig) -> Self {
+    pub fn new(_config: WatcherConfig) -> Self {
         Self {
-            config,
+            _config,
             file_manager: FileStateManager::new(),
             event_sender: None,
             _watcher: None,
@@ -98,7 +98,7 @@ impl MultiFileWatcher {
         // Create the notify watcher
         let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
             if let Err(e) = notify_sender.send(result) {
-                eprintln!("Failed to send notify event: {}", e);
+                eprintln!("Failed to send notify event: {e}");
             }
         })?;
 
@@ -122,7 +122,7 @@ impl MultiFileWatcher {
                         }
                     }
                     Err(e) => {
-                        let error_event = WatchEvent::Error(format!("Notify error: {}", e));
+                        let error_event = WatchEvent::Error(format!("Notify error: {e}"));
                         if event_sender_clone.send(error_event).is_err() {
                             break; // Receiver dropped
                         }
@@ -159,27 +159,15 @@ impl MultiFileWatcher {
         match event.kind {
             EventKind::Modify(_) => {
                 // File was modified
-                if let Some(path) = event.paths.first() {
-                    Some(WatchEvent::FileModified(path.clone()))
-                } else {
-                    None
-                }
+                event.paths.first().map(|path| WatchEvent::FileModified(path.clone()))
             }
             EventKind::Create(_) => {
                 // File was created
-                if let Some(path) = event.paths.first() {
-                    Some(WatchEvent::FileCreated(path.clone()))
-                } else {
-                    None
-                }
+                event.paths.first().map(|path| WatchEvent::FileCreated(path.clone()))
             }
             EventKind::Remove(_) => {
                 // File was deleted
-                if let Some(path) = event.paths.first() {
-                    Some(WatchEvent::FileDeleted(path.clone()))
-                } else {
-                    None
-                }
+                event.paths.first().map(|path| WatchEvent::FileDeleted(path.clone()))
             }
             _ => {
                 // Other event types we don't handle yet

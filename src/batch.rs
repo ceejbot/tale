@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
+// use tokio::time::timeout;
 
 const TIMESTAMP_FIELDS: [&str; 3] = ["timestamp", "time", "ts"];
 
@@ -83,7 +83,7 @@ impl BatchedLine {
     /// Get the sort key for this line (timestamp or received_at)
     pub fn sort_key(&self) -> SortKey {
         if let Some(ts) = &self.timestamp {
-            SortKey::Timestamp(ts.clone())
+            SortKey::Timestamp(*ts)
         } else {
             SortKey::ReceivedAt(self.received_at)
         }
@@ -210,7 +210,7 @@ impl BatchProcessor {
 
         tokio::spawn(async move {
             if let Err(e) = processor.process_loop().await {
-                eprintln!("Batch processor error: {}", e);
+                eprintln!("Batch processor error: {e}");
             }
         });
 
@@ -219,8 +219,12 @@ impl BatchProcessor {
 
     /// Process incoming lines and emit sorted batches
     async fn process_loop(&mut self) -> Result<()> {
-        let line_receiver = self.receiver.take().unwrap();
-        let batch_sender = self.sender.take().unwrap();
+        let Some(line_receiver) = self.receiver.take() else {
+            return Err(anyhow!("could not take a line receiver"));
+        };
+        let Some(batch_sender) = self.sender.take() else {
+            return Err(anyhow!("could not take a batch sender from our sender"));
+        };
         let mut line_receiver = line_receiver;
 
         // Set up timeout for batch windows
@@ -288,8 +292,8 @@ impl BatchProcessor {
         self.window_start = None;
 
         // Send the sorted batch
-        if let Err(_) = batch_sender.send(sorted_lines) {
-            // Receiver dropped, return error to stop processing
+        if batch_sender.send(sorted_lines).is_err() {
+            // Receiver dropped; return error to stop processing
             return Err(anyhow!("Batch receiver dropped"));
         }
 

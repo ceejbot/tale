@@ -30,7 +30,7 @@ pub fn handle_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
     all_lines.iter().for_each(|(file_path, lines)| {
         lines.iter().enumerate().for_each(|(line_num, line_content)| {
             let parsed: Printable<'_> = {
-                match serde_json::from_str::<Printable<'_>>(&line_content) {
+                match serde_json::from_str::<Printable<'_>>(line_content) {
                     Ok(printable) => printable,
                     Err(_) => {
                         // If parsing as Printable fails, it's either invalid JSON or doesn't match any
@@ -108,7 +108,7 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
                                             path.clone(),
                                             line_num as u64
                                         );
-                                        if let Err(_) = line_sender.send(batched_line) {
+                                        if line_sender.send(batched_line).is_err() {
                                             return Err(anyhow!("Batch processor stopped"));
                                         }
                                     }
@@ -117,7 +117,7 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
                         }
                     }
                     Some(WatchEvent::Error(err)) => {
-                        eprintln!("Watch error: {}", err);
+                        eprintln!("Watch error: {err}");
                     }
                     Some(_) => {
                         // Other events (create, delete) - could handle these in future

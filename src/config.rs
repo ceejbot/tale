@@ -32,7 +32,7 @@ pub fn offset() -> i64 {
     config().offset
 }
 
-pub fn offset_unit() -> Offset {
+pub fn offset_unit() -> OffsetUnit {
     config().offset_unit
 }
 
@@ -42,6 +42,14 @@ pub fn show_time() -> bool {
 
 pub fn batch_window_ms() -> u64 {
     config().batch_window_ms
+}
+
+pub fn force_chunked() -> bool {
+    config().force_chunked
+}
+
+pub fn disable_chunked() -> bool {
+    config().disable_chunked
 }
 
 pub fn mode() -> &'static InputMode {
@@ -54,14 +62,16 @@ pub struct ConfigOpts {
     pub tailing: bool,
     pub sticky: bool,
     pub offset: i64,
-    pub offset_unit: Offset,
+    pub offset_unit: OffsetUnit,
     pub show_time: bool,
     pub batch_window_ms: u64,
     pub mode: InputMode,
+    pub force_chunked: bool,
+    pub disable_chunked: bool,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
-pub enum Offset {
+pub enum OffsetUnit {
     #[default]
     Lines,
     Blocks,
@@ -92,12 +102,10 @@ fn expand_globs(args: &[String]) -> anyhow::Result<Vec<PathBuf>> {
 
     for candidate in args {
         if is_glob(candidate.as_str()) {
-            let pattern = glob::glob(&candidate)?;
-            for entry in pattern {
-                if let Ok(fpath) = entry {
-                    if fpath.is_file() {
-                        all_paths.push(fpath);
-                    }
+            let pattern = glob::glob(candidate)?;
+            for fpath in pattern.flatten() {
+                if fpath.is_file() {
+                    all_paths.push(fpath);
                 }
             }
         } else {
@@ -173,15 +181,15 @@ impl ConfigOpts {
         };
 
         let (offset, offset_unit) = if let Some(blocks) = args.blocks {
-            (blocks, Offset::Blocks)
+            (blocks, OffsetUnit::Blocks)
         } else if let Some(bytes) = args.bytes {
-            (bytes, Offset::Bytes)
+            (bytes, OffsetUnit::Bytes)
         } else if let Some(lines) = args.offset {
-            (lines, Offset::Lines)
+            (lines, OffsetUnit::Lines)
         } else if let Some(offset) = maybe_offset {
-            (offset, Offset::Lines)
+            (offset, OffsetUnit::Lines)
         } else {
-            (0, Offset::Lines)
+            (0, OffsetUnit::Lines)
         };
 
         Self {
@@ -192,6 +200,8 @@ impl ConfigOpts {
             show_time: args.timestamps,
             batch_window_ms: args.window,
             mode,
+            force_chunked: args.chunked,
+            disable_chunked: args.no_chunked,
         }
     }
 }
@@ -212,6 +222,8 @@ mod tests {
             verbose: false,
             quiet: false,
             window: 250,
+            chunked: false,
+            no_chunked: false,
             args: vec!["-4".to_string()],
         };
         let config = ConfigOpts::new(&args);

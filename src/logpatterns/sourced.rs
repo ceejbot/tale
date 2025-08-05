@@ -59,7 +59,7 @@ impl<'a> SourcedLine<'a> {
     pub fn sort_key(&self) -> SortKey {
         if let Some(ts) = self.timestamp() {
             // If we have a timestamp, use it for sorting
-            SortKey::Timestamp(ts.clone())
+            SortKey::Timestamp(*ts)
         } else {
             // If no timestamp, sort by file path and line number to maintain file order
             SortKey::FileOrder {

@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 
 use ansi_width::ansi_width;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use humansize::{BINARY, format_size};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
@@ -346,7 +346,7 @@ impl<'a> PrettyPrintable for &Message<'a> {
                 });
             }
             v => {
-                cells.push(colorize_json_value(&v));
+                cells.push(colorize_json_value(v));
             }
         }
         cells
@@ -387,7 +387,7 @@ impl<'a> PrettyPrintable for Java<'a> {
             LEVEL_WIDTH
         };
 
-        let mut pad_or_newline = |width: usize, count: usize, buf: &mut BytesMut| {
+        let pad_or_newline = |width: usize, count: usize, buf: &mut BytesMut| {
             if count + width + 2 >= max_message_width {
                 start_new_line(buf, padding);
                 padding + 3
@@ -486,7 +486,7 @@ impl<'a> PrettyPrintable for Java<'a> {
                 });
             }
             v => {
-                cells.push(colorize_json_value(&v));
+                cells.push(colorize_json_value(v));
             }
         }
         cells
@@ -626,7 +626,7 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
                 });
             }
             v => {
-                cells.push(colorize_json_value(&v));
+                cells.push(colorize_json_value(v));
             }
         }
         cells
