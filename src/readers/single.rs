@@ -10,74 +10,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use bytes::BytesMut;
 
+use super::{FileProcessor, create_file_processor};
 use crate::constants::*;
-use crate::readers::{FileProcessor, create_file_processor};
 use crate::{config, process_line, strip_line_ending};
-
-/// Entry point for handling a file.
-pub fn handle_file(fpath: &Path) -> anyhow::Result<()> {
-    if !fpath.exists() {
-        return Err(anyhow!("{} does not exist!", fpath.display()));
-    }
-    if !fpath.is_file() {
-        return Err(anyhow!("{} is not a file!", fpath.display()));
-    }
-
-    let mut processor = SimpleFileProcessor::new(fpath.to_path_buf());
-    // here, tail handles offsets
-    processor.tail()
-}
-
-/// Entry point for handling a file with chunked processing when beneficial
-pub fn handle_file_chunked(fpath: &PathBuf) -> anyhow::Result<()> {
-    if !fpath.exists() {
-        return Err(anyhow!("{} does not exist!", fpath.display()));
-    }
-
-    let offset = config::offset();
-    let offset_unit = config::offset_unit();
-    let large_offset = offset.abs() > 10_000; // Consider large if >10k units
-
-    // Create optimal file processor based on file characteristics
-    let force_chunked = config::force_chunked();
-    let mut processor = create_file_processor(fpath, None, offset, offset_unit, large_offset, force_chunked)?;
-
-    // Handle different offset scenarios
-    match (offset.is_positive(), offset_unit) {
-        // Positive line offset: skip lines from start
-        (true, config::OffsetUnit::Lines) if offset > 0 => {
-            processor.skip_lines(offset as u64)?;
-
-            // Process remaining lines
-            let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-            let mut outlock = io::stdout().lock();
-
-            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
-
-            outlock.flush()?;
-        }
-
-        // Negative line offset: seek to position and process
-        (false, config::OffsetUnit::Lines) if offset < 0 => {
-            // For negative offsets, we need to use the existing seek logic
-            // Fall back to the original implementation for now
-            let mut old_processor = SimpleFileProcessor::new(fpath.to_path_buf());
-            old_processor.tail()?;
-        }
-
-        // Zero offset or other cases: process entire file
-        _ => {
-            let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-            let mut outlock = io::stdout().lock();
-
-            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
-
-            outlock.flush()?;
-        }
-    }
-
-    Ok(())
-}
 
 pub struct SimpleFileProcessor<'a> {
     fpath: PathBuf,
@@ -88,6 +23,7 @@ pub struct SimpleFileProcessor<'a> {
     count: u16,
 }
 
+// TODO: finish implementing the trait; clean up.
 impl<'a> FileProcessor for SimpleFileProcessor<'a> {
     fn process_lines<F>(&mut self, line_processor: F) -> Result<()>
     where

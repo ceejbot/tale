@@ -8,7 +8,6 @@ mod file_state;
 mod logpatterns;
 mod multiplexed;
 mod readers;
-mod simple;
 mod watcher;
 
 use std::io::{self, Write};
@@ -119,6 +118,8 @@ fn v3_styles() -> Styles {
         .placeholder(AnsiColor::Green.on_default())
 }
 
+// TODO: move the two inlines somewhere sensible.
+
 /// Process a single line of input (JSON or plain text) and write to output.
 #[inline]
 pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> anyhow::Result<()> {
@@ -162,18 +163,7 @@ async fn main() -> anyhow::Result<()> {
     let mode = config::mode();
     match mode {
         InputMode::Stdin => readers::handle_stdin(),
-        InputMode::SingleFile { path } => {
-            // Check if we should use chunked processing
-            let offset = config::offset();
-            let large_offset = offset.abs() > 10_000;
-            let should_use_chunked = config::force_chunked() || (!config::disable_chunked() && large_offset);
-
-            if should_use_chunked {
-                simple::handle_file_chunked(path)
-            } else {
-                simple::handle_file(path)
-            }
-        }
+        InputMode::SingleFile { path } => readers::handle_file(path),
         InputMode::MultiFile { paths } => {
             if args.follow || args.sticky {
                 // Multi-file tailing mode

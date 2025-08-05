@@ -5,38 +5,103 @@
 
 mod buffered;
 mod chunked;
+mod single;
 mod stdin;
 
-use std::io::SeekFrom;
+use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 pub use buffered::*;
+use bytes::BytesMut;
 pub use chunked::*;
+pub use single::*;
 pub use stdin::*;
 
-use crate::config;
-use crate::simple::SimpleFileProcessor;
+use crate::constants::*;
+use crate::{config, process_line};
+
+/// Entry point for handling a file. We look at config and some
+/// facts about the file, then pick the best processor for the circumstances.
+pub fn handle_file(fpath: &Path) -> anyhow::Result<()> {
+    if !fpath.exists() {
+        return Err(anyhow::anyhow!("{} does not exist!", fpath.display()));
+    }
+    if !fpath.is_file() {
+        return Err(anyhow::anyhow!("{} is not a file!", fpath.display()));
+    }
+
+    let mut processor = create_file_processor(fpath, None)?;
+
+    // TODO smooth this out
+    if let FileProcessorType::Simple(mut simple) = processor {
+        // we can stop thinking because this handles everything.
+        return simple.tail();
+    }
+
+    // now do what the chunked handler used to and I hate everything.
+    let offset = config::offset();
+    let offset_unit = config::offset_unit();
+
+    // Handle different offset scenarios
+    match (offset.is_positive(), offset_unit) {
+        // Positive line offset: skip lines from start
+        (true, config::OffsetUnit::Lines) if offset > 0 => {
+            processor.skip_lines(offset as u64)?;
+
+            // Process remaining lines
+            let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
+            let mut outlock = io::stdout().lock();
+
+            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
+
+            outlock.flush()?;
+        }
+
+        // Negative line offset: seek to position and process
+        (false, config::OffsetUnit::Lines) if offset < 0 => {
+            // For negative offsets, we need to use the existing seek logic
+            // Fall back to the original implementation for now
+            let mut old_processor = SimpleFileProcessor::new(fpath.to_path_buf());
+            old_processor.tail()?;
+        }
+
+        // Zero offset or other cases: process entire file
+        _ => {
+            let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
+            let mut outlock = io::stdout().lock();
+
+            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
+
+            outlock.flush()?;
+        }
+    }
+    Ok(())
+}
 
 /// Create the optimal file processor for the given file and operation
 pub fn create_file_processor<P: AsRef<Path>>(
     path: P,
     file_size_hint: Option<u64>,
-    offset: i64,
-    offset_unit: config::OffsetUnit,
-    large_offset: bool,
-    force_chunked: bool,
 ) -> Result<FileProcessorType<'static>> {
     let path = path.as_ref();
 
     // Get file size if not provided
     let file_size = file_size_hint.unwrap_or_else(|| std::fs::metadata(path).map(|m| m.len()).unwrap_or(0));
 
-    // Decision logic for when to use chunked processing
-    let use_chunked = force_chunked ||
-        (file_size > 100_000_000 && large_offset) || // 100MB+ with large offset
-        file_size > 1_000_000_000; // Always chunk files >1GB
+    let offset = config::offset();
+    let offset_unit = config::offset_unit();
+    let large_offset = offset.abs() > 10_000; // TODO magic number
 
+    // Pick which processor suits the situation; TODO more magic numbers
+    let use_chunked = !config::disable_chunked()
+        && (config::force_chunked() ||
+        (file_size > 100_000_000 && large_offset) || // 100MB+ with large offset
+        file_size > 1_000_000_000); // Always chunk files >1GB
+
+    // This is the only reader that can handle negative block and byte offsets, and
+    // it already handles them reasonably (though its chunks might not be
+    // optimal). This is something I need to refactor away.
     if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes | config::OffsetUnit::Blocks) {
         let processor = SimpleFileProcessor::new(PathBuf::from(path));
         return Ok(FileProcessorType::Simple(processor));
@@ -71,7 +136,7 @@ pub trait FileProcessor {
     fn position(&self) -> u64;
 }
 
-/// Chonked vs buffered vs something else variants.
+/// Chonked vs buffered vs can-go-backwards variants.
 pub enum FileProcessorType<'a> {
     Buffered(BufferedFileProcessor),
     Chunked(ChunkedFileReader),
@@ -128,6 +193,8 @@ mod tests {
     use std::io::Write;
 
     use tempfile::NamedTempFile;
+
+    use crate::config::ConfigOpts;
 
     use super::*;
 
@@ -241,11 +308,14 @@ mod tests {
 
     #[test]
     fn abstract_processor_impl_factory_noun() -> Result<()> {
+        let cfg = ConfigOpts::default();
+        config::set(cfg).expect("the test should be able to set config");
+
         let test_data = "line1\nline2\nline3\n";
         let temp_file = create_test_file(test_data);
 
         // Small file should use buffered processor
-        let mut processor = create_file_processor(temp_file.path(), None, 0, config::OffsetUnit::Lines, false, false)?;
+        let mut processor = create_file_processor(temp_file.path(), None)?;
         assert_eq!(processor.file_size(), test_data.len() as u64);
 
         let mut lines = Vec::new();
