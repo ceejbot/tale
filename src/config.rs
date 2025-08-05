@@ -223,7 +223,7 @@ mod tests {
     fn glob_expansions() {
         let fixture_glob = "./fixtures/*.log".to_string();
         let results = expand_globs(&[fixture_glob]).expect("this list of paths should expand successfully");
-        assert_eq!(results.len(), 7); // changes if we add fixtures to that directory
+        assert_eq!(results.len(), 8); // changes if we add fixtures to that directory
         assert_eq!(
             results.as_slice(),
             vec![
@@ -231,6 +231,7 @@ mod tests {
                 PathBuf::from("fixtures/garbage_prefix.log"),
                 PathBuf::from("fixtures/java_stacktrace.log"),
                 PathBuf::from("fixtures/just_loglines.log"),
+                PathBuf::from("fixtures/log4j.log"),
                 PathBuf::from("fixtures/mixed_json_types.log"),
                 PathBuf::from("fixtures/mixed_text_json.log"),
                 PathBuf::from("fixtures/windows_line_endings.log")

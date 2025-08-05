@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
 
-use crate::loglines::*;
+use crate::logpatterns::*;
 use crate::{config, process_line};
 
 /// Handle multi-file static mode (read all files once, no following)

@@ -13,8 +13,6 @@ use jiff::Timestamp;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use crate::loglines::{Canonical, Message, Printable};
-
 const TIMESTAMP_FIELDS: [&str; 3] = ["timestamp", "time", "ts"];
 
 /// A line from a file with metadata for sorting and batching

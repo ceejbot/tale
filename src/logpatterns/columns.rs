@@ -1,7 +1,6 @@
 //! Custom column layout module optimized for tale's needs.
-//!
-//! Replaces term_grid with a simpler, more efficient implementation
-//! that writes directly to buffers without intermediate allocations.
+//! We blast through the cells in a single pass, left to
+//! right, emitting directly to a buffer without formatting strings.
 
 use ansi_width::ansi_width;
 use bytes::BytesMut;
