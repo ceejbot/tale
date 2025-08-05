@@ -274,8 +274,8 @@ impl FileProcessor for ChunkedFileReader {
                     let lines_to_skip_in_chunk = count - lines_skipped;
 
                     // Process remaining lines in this chunk
-                    for _line in chunk_lines.iter().skip(lines_to_skip_in_chunk as usize) {
-                        // TODO this implementation does not consume the lines
+                    while let Some(_line) = chunk_lines.iter().skip(lines_to_skip_in_chunk as usize).next() {
+                        // do something with the line.
 
                         // This approach isn't optimal - in a real implementation,
                         // we'd want to adjust the file position more precisely

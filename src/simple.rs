@@ -81,18 +81,20 @@ pub fn handle_file_chunked(fpath: &PathBuf) -> anyhow::Result<()> {
 
 pub struct SimpleFileProcessor<'a> {
     fpath: PathBuf,
+    initial_file_size: u64,
+    file: Option<File>,
     outlock: io::StdoutLock<'a>,
     buffer: BytesMut,
     count: u16,
 }
 
 impl<'a> FileProcessor for SimpleFileProcessor<'a> {
-    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, line_processor: F) -> Result<()>
     where
         F: FnMut(&str) -> Result<()>,
     {
-        let mut temp_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-        let mut temp_outlock = io::stdout().lock();
+        let temp_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
+        let temp_outlock = io::stdout().lock();
 
         // process_line()
 
@@ -108,25 +110,42 @@ impl<'a> FileProcessor for SimpleFileProcessor<'a> {
     }
 
     fn file_size(&self) -> u64 {
-        let Ok(mut file) = File::open(&self.fpath) else {
-            return 0;
-        };
-        file.seek(io::SeekFrom::End(0)).unwrap_or_default()
+        self.initial_file_size
     }
 
     fn seek(&mut self, pos: io::SeekFrom) -> anyhow::Result<u64> {
-        todo!()
+        if let Some(mut f) = self.file.as_ref() {
+            Ok(f.seek(pos)?)
+        } else {
+            let mut file = File::open(&self.fpath)?;
+            let actual = file.seek(pos)?;
+            self.file = Some(file);
+            Ok(actual)
+        }
     }
 
     fn position(&self) -> u64 {
-        todo!()
+        if let Some(mut f) = self.file.as_ref() {
+            f.stream_position().unwrap_or_default()
+        } else {
+            0
+        }
     }
 }
 
 impl<'a> SimpleFileProcessor<'a> {
     pub fn new(fpath: PathBuf) -> Self {
+        // briefly open the file and figure out its size
+        let file_size = if let Ok(mut file) = File::open(&fpath) {
+            file.seek(io::SeekFrom::End(0)).unwrap_or_default()
+        } else {
+            0
+        };
+
         Self {
             fpath,
+            initial_file_size: file_size,
+            file: None,
             outlock: io::stdout().lock(),
             buffer: BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY),
             count: 0,
@@ -141,7 +160,6 @@ impl<'a> SimpleFileProcessor<'a> {
     /// weakness in the internal API.
     pub fn move_to_position(&mut self, offset: i64, units: config::OffsetUnit, tailing: bool) -> anyhow::Result<File> {
         let mut file = File::open(&self.fpath)?;
-
         // Short circuit if there is no work to do.
         let file_size = file.seek(io::SeekFrom::End(0))?;
         if file_size == 0 {
