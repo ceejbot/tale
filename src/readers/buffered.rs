@@ -4,9 +4,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
-use anyhow::Result;
+use miette::{ErrReport, Result};
 
 use super::FileProcessor;
+use crate::errors::TaleError;
 
 /// Standard buffered file reader implementation
 pub struct BufferedFileProcessor {
@@ -16,7 +17,7 @@ pub struct BufferedFileProcessor {
 }
 
 impl BufferedFileProcessor {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
         let mut file = File::open(&path)?;
         let file_size = file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
@@ -32,9 +33,9 @@ impl BufferedFileProcessor {
 }
 
 impl FileProcessor for BufferedFileProcessor {
-    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<(), TaleError>
     where
-        F: FnMut(&str) -> Result<()>,
+        F: FnMut(&str) -> Result<(), TaleError>,
     {
         let mut line = String::new();
         while self.reader.read_line(&mut line)? > 0 {
@@ -52,7 +53,7 @@ impl FileProcessor for BufferedFileProcessor {
         Ok(())
     }
 
-    fn skip_lines(&mut self, count: u64) -> Result<()> {
+    fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         let mut line = String::new();
         for _ in 0..count {
             if self.reader.read_line(&mut line)? == 0 {
@@ -67,8 +68,8 @@ impl FileProcessor for BufferedFileProcessor {
         self.file_size
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
-        let new_pos = self.reader.get_mut().seek(pos)?;
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+        let new_pos = self.reader.get_mut().seek(pos).map_err(TaleError::from)?;
         self.current_position = new_pos;
         Ok(new_pos)
     }

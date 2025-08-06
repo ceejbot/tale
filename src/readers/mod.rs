@@ -11,30 +11,53 @@ mod stdin;
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
 pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
+use miette::ErrReport;
 pub use single::*;
 pub use stdin::*;
 
 use crate::constants::*;
+use crate::errors::{FileError, TaleError, find_similar_files};
 use crate::{config, process_line};
 
 /// We're displaying a file. Let's chug through it.
-pub fn handle_file(fpath: &Path) -> anyhow::Result<()> {
+pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
     let _sticky = config::sticky();
 
+    // Check if file exists and provide helpful suggestions
     if !fpath.exists() {
         // TODO if we are sticky, we need to watch the file until it
         // appears or the user kills the process.
-        return Err(anyhow::anyhow!("{} does not exist!", fpath.display()));
-    }
-    if !fpath.is_file() {
-        return Err(anyhow::anyhow!("{} is not a file!", fpath.display()));
+        let similar_files = find_similar_files(fpath);
+        return Err(FileError::not_found_with_suggestions(fpath.to_path_buf(), similar_files).into());
     }
 
-    let mut processor = create_file_processor(fpath, None)?;
+    // Check if it's actually a file (not a directory, etc.)
+    if !fpath.is_file() {
+        return Err(FileError::not_a_file_with_type(fpath.to_path_buf()).into());
+    }
+
+    // Try to create processor and provide helpful context for common errors
+    let mut processor = create_file_processor(fpath, None).map_err(|e| {
+        // Check if this is likely a permission error
+        match &e {
+            TaleError::Io(crate::errors::IoError::OperationFailed { source, .. }) => match source.kind() {
+                std::io::ErrorKind::PermissionDenied => {
+                    let suggestion = if cfg!(unix) {
+                        Some(format!("Try: chmod +r {}", fpath.display()))
+                    } else {
+                        Some("Check file permissions in Properties".to_string())
+                    };
+                    return FileError::permission_denied_with_suggestion(fpath.to_path_buf(), suggestion).into();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        e // Return original error if not a recognized pattern
+    })?;
 
     // TODO smooth this out
     if let FileProcessorType::Simple(mut simple) = processor {
@@ -86,7 +109,7 @@ pub fn handle_file(fpath: &Path) -> anyhow::Result<()> {
 pub fn create_file_processor<P: AsRef<Path>>(
     path: P,
     file_size_hint: Option<u64>,
-) -> Result<FileProcessorType<'static>> {
+) -> Result<FileProcessorType<'static>, TaleError> {
     let path = path.as_ref();
 
     // Get file size if not provided
@@ -123,18 +146,18 @@ pub fn create_file_processor<P: AsRef<Path>>(
 /// Trait for abstracting different file reading strategies
 pub trait FileProcessor {
     /// Process the entire file, calling the provided closure for each line
-    fn process_lines<F>(&mut self, line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, line_processor: F) -> Result<(), TaleError>
     where
-        F: FnMut(&str) -> Result<()>;
+        F: FnMut(&str) -> Result<(), TaleError>;
 
     /// Skip a specified number of lines from the current position
-    fn skip_lines(&mut self, count: u64) -> Result<()>;
+    fn skip_lines(&mut self, count: u64) -> Result<(), TaleError>;
 
     /// Get the file size in bytes
     fn file_size(&self) -> u64;
 
     /// Seek to a specific position in the file
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64>;
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport>;
 
     /// Get current position in the file
     fn position(&self) -> u64;
@@ -148,9 +171,9 @@ pub enum FileProcessorType<'a> {
 }
 
 impl<'a> FileProcessor for FileProcessorType<'a> {
-    fn process_lines<F>(&mut self, line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, line_processor: F) -> Result<(), TaleError>
     where
-        F: FnMut(&str) -> Result<()>,
+        F: FnMut(&str) -> Result<(), TaleError>,
     {
         match self {
             FileProcessorType::Buffered(processor) => processor.process_lines(line_processor),
@@ -159,7 +182,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         }
     }
 
-    fn skip_lines(&mut self, count: u64) -> Result<()> {
+    fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         match self {
             FileProcessorType::Buffered(processor) => processor.skip_lines(count),
             FileProcessorType::Chunked(processor) => processor.skip_lines(count),
@@ -175,7 +198,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         }
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
         match self {
             FileProcessorType::Buffered(processor) => processor.seek(pos),
             FileProcessorType::Chunked(processor) => processor.seek(pos),
@@ -198,9 +221,8 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use crate::config::ConfigOpts;
-
     use super::*;
+    use crate::config::ConfigOpts;
 
     fn create_test_file(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().expect("Failed to create temp file");
@@ -229,116 +251,156 @@ mod tests {
         let fp = PathBuf::from("./fixtures/benchmarks/medium.log");
 
         // Test 1: Negative offset always uses Simple processor
-        crate::config::with_config(ConfigOpts {
-            offset: -20,
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(1_000_000_000))
-                .expect("should create processor for negative offset");
-            assert!(matches!(result, FileProcessorType::Simple(_)), 
-                "Negative offset should use Simple processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: -20,
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result = create_file_processor(&fp, Some(1_000_000_000))
+                    .expect("should create processor for negative offset");
+                assert!(
+                    matches!(result, FileProcessorType::Simple(_)),
+                    "Negative offset should use Simple processor"
+                );
+            },
+        );
 
         // Test 2: Byte offset units always use Simple processor
-        crate::config::with_config(ConfigOpts {
-            offset: 100,
-            offset_unit: config::OffsetUnit::Bytes,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(1_000_000_000))
-                .expect("should create processor for byte offset");
-            assert!(matches!(result, FileProcessorType::Simple(_)), 
-                "Byte offset should use Simple processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 100,
+                offset_unit: config::OffsetUnit::Bytes,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result =
+                    create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for byte offset");
+                assert!(
+                    matches!(result, FileProcessorType::Simple(_)),
+                    "Byte offset should use Simple processor"
+                );
+            },
+        );
 
-        // Test 3: Block offset units always use Simple processor  
-        crate::config::with_config(ConfigOpts {
-            offset: 100,
-            offset_unit: config::OffsetUnit::Blocks,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(1_000_000_000))
-                .expect("should create processor for block offset");
-            assert!(matches!(result, FileProcessorType::Simple(_)), 
-                "Block offset should use Simple processor");
-        });
+        // Test 3: Block offset units always use Simple processor
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 100,
+                offset_unit: config::OffsetUnit::Blocks,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result =
+                    create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for block offset");
+                assert!(
+                    matches!(result, FileProcessorType::Simple(_)),
+                    "Block offset should use Simple processor"
+                );
+            },
+        );
 
         // Test 4: force_chunked=true uses Chunked processor (when not disabled)
-        crate::config::with_config(ConfigOpts {
-            offset: 100,
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: true,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(100_000_000))
-                .expect("should create processor for force_chunked");
-            assert!(matches!(result, FileProcessorType::Chunked(_)), 
-                "force_chunked should use Chunked processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 100,
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: true,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result =
+                    create_file_processor(&fp, Some(100_000_000)).expect("should create processor for force_chunked");
+                assert!(
+                    matches!(result, FileProcessorType::Chunked(_)),
+                    "force_chunked should use Chunked processor"
+                );
+            },
+        );
 
         // Test 5: disable_chunked=true prevents Chunked processor
-        crate::config::with_config(ConfigOpts {
-            offset: 20_000, // Large offset
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: false,
-            disable_chunked: true,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(200_000_000))
-                .expect("should create processor for disable_chunked");
-            assert!(matches!(result, FileProcessorType::Buffered(_)), 
-                "disable_chunked should prevent Chunked processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 20_000, // Large offset
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: false,
+                disable_chunked: true,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result =
+                    create_file_processor(&fp, Some(200_000_000)).expect("should create processor for disable_chunked");
+                assert!(
+                    matches!(result, FileProcessorType::Buffered(_)),
+                    "disable_chunked should prevent Chunked processor"
+                );
+            },
+        );
 
         // Test 6: Large file (>1GB) uses Chunked processor
-        crate::config::with_config(ConfigOpts {
-            offset: 100,
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(1_500_000_000)) // 1.5GB
-                .expect("should create processor for large file");
-            assert!(matches!(result, FileProcessorType::Chunked(_)), 
-                "Large file (>1GB) should use Chunked processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 100,
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result = create_file_processor(&fp, Some(1_500_000_000)) // 1.5GB
+                    .expect("should create processor for large file");
+                assert!(
+                    matches!(result, FileProcessorType::Chunked(_)),
+                    "Large file (>1GB) should use Chunked processor"
+                );
+            },
+        );
 
-        // Test 7: Large file + large offset uses Chunked processor  
-        crate::config::with_config(ConfigOpts {
-            offset: 20_000, // Large offset (>10,000)
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(150_000_000)) // 150MB + large offset
-                .expect("should create processor for large file + large offset");
-            assert!(matches!(result, FileProcessorType::Chunked(_)), 
-                "Large file (>100MB) + large offset (>10k) should use Chunked processor");
-        });
+        // Test 7: Large file + large offset uses Chunked processor
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 20_000, // Large offset (>10,000)
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result = create_file_processor(&fp, Some(150_000_000)) // 150MB + large offset
+                    .expect("should create processor for large file + large offset");
+                assert!(
+                    matches!(result, FileProcessorType::Chunked(_)),
+                    "Large file (>100MB) + large offset (>10k) should use Chunked processor"
+                );
+            },
+        );
 
         // Test 8: Small file + small offset uses Buffered processor
-        crate::config::with_config(ConfigOpts {
-            offset: 100, // Small offset
-            offset_unit: config::OffsetUnit::Lines,
-            force_chunked: false,
-            disable_chunked: false,
-            ..ConfigOpts::default()
-        }, || {
-            let result = create_file_processor(&fp, Some(10_000_000)) // 10MB
-                .expect("should create processor for small file + small offset");
-            assert!(matches!(result, FileProcessorType::Buffered(_)), 
-                "Small file + small offset should use Buffered processor");
-        });
+        crate::config::with_config(
+            ConfigOpts {
+                offset: 100, // Small offset
+                offset_unit: config::OffsetUnit::Lines,
+                force_chunked: false,
+                disable_chunked: false,
+                ..ConfigOpts::default()
+            },
+            || {
+                let result = create_file_processor(&fp, Some(10_000_000)) // 10MB
+                    .expect("should create processor for small file + small offset");
+                assert!(
+                    matches!(result, FileProcessorType::Buffered(_)),
+                    "Small file + small offset should use Buffered processor"
+                );
+            },
+        );
     }
 
     #[test]
@@ -353,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunked_file_reader_small_file() -> Result<()> {
+    fn test_chunked_file_reader_small_file() -> Result<(), TaleError> {
         let test_data = "line1\nline2\nline3\n";
         let temp_file = create_test_file(test_data);
 
@@ -408,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn buffer_thing_works() -> Result<()> {
+    fn buffer_thing_works() -> Result<(), TaleError> {
         let test_data = "line1\nline2\nline3\n";
         let temp_file = create_test_file(test_data);
 
@@ -428,26 +490,27 @@ mod tests {
     }
 
     #[test]
-    fn abstract_processor_impl_factory_noun() -> Result<()> {
+    fn abstract_processor_impl_factory_noun() -> Result<(), TaleError> {
         let test_data = "line1\nline2\nline3\n";
         let temp_file = create_test_file(test_data);
 
         // Use with_config to isolate this test
         config::with_config(ConfigOpts::default(), || {
             // Small file should use buffered processor
-            let mut processor = create_file_processor(temp_file.path(), None)
-                .expect("should create processor");
+            let mut processor = create_file_processor(temp_file.path(), None).expect("should create processor");
             assert_eq!(processor.file_size(), test_data.len() as u64);
 
             let mut lines = Vec::new();
-            processor.process_lines(|line| {
-                lines.push(line.to_string());
-                Ok(())
-            }).expect("should process lines");
+            processor
+                .process_lines(|line| {
+                    lines.push(line.to_string());
+                    Ok(())
+                })
+                .expect("should process lines");
 
             assert_eq!(lines, vec!["line1", "line2", "line3"]);
         });
-        
+
         Ok(())
     }
 }

@@ -41,8 +41,9 @@ pub enum InputMode {
 // Production implementation: Simple OnceLock for fast access
 #[cfg(not(test))]
 mod runtime {
-    use super::ConfigOpts;
     use std::sync::OnceLock;
+
+    use super::ConfigOpts;
 
     /// Hold our configuration - production uses simple OnceLock
     pub static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
@@ -63,10 +64,11 @@ mod runtime {
 // Test implementation: Thread-local storage for isolation
 #[cfg(test)]
 mod runtime {
-    use super::ConfigOpts;
     use std::cell::RefCell;
 
-    /// Test implementation uses thread-local storage for isolation
+    use super::ConfigOpts;
+
+    // Test implementation uses thread-local storage for isolation
     thread_local! {
         pub static TEST_CONFIG: RefCell<Option<ConfigOpts>> = RefCell::new(None);
     }
@@ -127,9 +129,10 @@ mod runtime {
 
 // Re-export the runtime implementation as the public API
 pub use runtime::{config, set};
-
 #[cfg(test)]
 pub use runtime::{update, with_config};
+
+use crate::errors::TaleError;
 
 // Public convenience accessors - these work with both implementations
 pub fn tailing() -> bool {
@@ -204,7 +207,7 @@ fn is_glob(maybe: &str) -> bool {
 /// to expand. If so, we find matches. Otherwise, we add that path
 /// to our list directly. However, for most people their shells will
 /// already have expanded globs, so this feature feels marginal.
-fn expand_globs(args: &[String]) -> anyhow::Result<Vec<PathBuf>> {
+fn expand_globs(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
     let mut all_paths = Vec::new();
 
     for candidate in args {
@@ -250,16 +253,18 @@ impl ConfigOpts {
                     (InputMode::Stdin, Some(offset))
                 } else {
                     // It's a filename or a glob
-                    let paths = handle_possible_paths(vec![only.clone()].as_slice());
-                    if paths.len() == 1 {
+                    if is_glob(only) {
+                        // It's a glob pattern, handle as multi-file
+                        let paths = handle_possible_paths(vec![only.clone()].as_slice());
+                        (InputMode::MultiFile { paths }, None)
+                    } else {
+                        // It's a single filename (may or may not exist) - always treat as SingleFile
                         (
                             InputMode::SingleFile {
                                 path: PathBuf::from(only),
                             },
                             None,
                         )
-                    } else {
-                        (InputMode::MultiFile { paths }, None)
                     }
                 }
             }

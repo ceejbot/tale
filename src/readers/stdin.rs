@@ -6,14 +6,15 @@
 use std::io::{self, BufRead, Read, Write};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
 use bytes::BytesMut;
+use miette::WrapErr;
 
 use crate::constants::*;
+use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
 /// Entry point for processing stdin all the ways we need to handle it.
-pub fn handle_stdin() -> Result<()> {
+pub fn handle_stdin() -> Result<(), TaleError> {
     let offset = config::offset();
     let offset_unit = config::offset_unit();
 
@@ -62,30 +63,30 @@ impl<'a> StdinProcessor<'a> {
     }
 
     /// Process a single line through the formatting pipeline
-    pub fn process_line(&mut self, line: &str) -> Result<()> {
+    pub fn process_line(&mut self, line: &str) -> Result<(), TaleError> {
         process_line(line, &mut self.buffer, &mut self.outlock).with_context(|| "Failed to process line")?;
         self.count += 1;
         self.flush_if_needed()
     }
 
     /// Flush output if we've processed enough lines
-    pub fn flush_if_needed(&mut self) -> Result<()> {
+    pub fn flush_if_needed(&mut self) -> Result<(), TaleError> {
         if self.count >= FLUSH_LINE_COUNT {
-            self.outlock.flush().context("Failed to flush stdout")?;
+            self.outlock.flush()?;
             self.count = 0;
         }
         Ok(())
     }
 
     /// Force flush output
-    pub fn flush(&mut self) -> Result<()> {
-        self.outlock.flush().context("Failed to flush stdout")?;
+    pub fn flush(&mut self) -> Result<(), TaleError> {
+        self.outlock.flush()?;
         self.count = 0;
         Ok(())
     }
 
     /// Read a line from stdin, stripping line endings
-    pub fn read_line(&mut self) -> Result<usize> {
+    pub fn read_line(&mut self) -> Result<usize, TaleError> {
         self.line.clear();
         let bytes_read = self.inlock.read_line(&mut self.line)?;
         if bytes_read > 0 {
@@ -100,7 +101,7 @@ impl<'a> StdinProcessor<'a> {
     }
 
     /// Process all remaining input until EOF
-    pub fn process_to_end(&mut self) -> Result<()> {
+    pub fn process_to_end(&mut self) -> Result<(), TaleError> {
         while self.read_line()? != 0 {
             let line = self.line().to_string();
             self.process_line(&line)?;
@@ -110,7 +111,7 @@ impl<'a> StdinProcessor<'a> {
 
     /// We have a partial buffer left over from a read. Seek back,
     /// then continue processing.
-    pub fn handle_overshoot(&mut self, overshoot: &[u8]) -> Result<()> {
+    pub fn handle_overshoot(&mut self, overshoot: &[u8]) -> Result<(), TaleError> {
         // Process any complete lines in the overshoot buffer using byte operations
         let mut start = 0;
         for (i, &byte) in overshoot.iter().enumerate() {
@@ -143,7 +144,7 @@ impl<'a> StdinProcessor<'a> {
 
     /// Enter normal processing mode - process input until EOF, then poll for
     /// more
-    pub fn tail(&mut self) -> Result<()> {
+    pub fn tail(&mut self) -> Result<(), TaleError> {
         self.process_to_end()?;
         if !config::tailing() {
             return Ok(());
@@ -167,7 +168,7 @@ impl<'a> StdinProcessor<'a> {
         }
     }
 
-    pub fn skip_lines(&mut self, count: u64) -> Result<()> {
+    pub fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         // Skip the requested number of lines
         let mut lines_skipped = 0u64;
         while lines_skipped < count {
@@ -185,7 +186,7 @@ impl<'a> StdinProcessor<'a> {
     }
 
     // skip bytes then keep going, tailing if config says to tail
-    pub fn skip_bytes(&mut self, to_skip: u64) -> Result<()> {
+    pub fn skip_bytes(&mut self, to_skip: u64) -> Result<(), TaleError> {
         let mut buffer = [0u8; READ_BUFFER_SIZE];
         let mut bytes_skipped = 0u64;
 
@@ -211,7 +212,7 @@ impl<'a> StdinProcessor<'a> {
         self.tail()
     }
 
-    pub fn backtrack_bytes(&mut self, bytes_to_show: u64) -> Result<()> {
+    pub fn backtrack_bytes(&mut self, bytes_to_show: u64) -> Result<(), TaleError> {
         let mut circular_buffer = CircularByteBuffer::new(bytes_to_show as usize);
 
         // Read all input into circular buffer
@@ -252,7 +253,7 @@ impl<'a> StdinProcessor<'a> {
     }
 
     /// Show last N lines from stdin (adaptive approach with circular buffer)
-    pub fn backtrack_lines(&mut self, lines_to_show: u64) -> Result<()> {
+    pub fn backtrack_lines(&mut self, lines_to_show: u64) -> Result<(), TaleError> {
         use std::collections::VecDeque;
 
         let mut line_buffer: VecDeque<String> = VecDeque::with_capacity(lines_to_show as usize);

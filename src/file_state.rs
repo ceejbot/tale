@@ -10,7 +10,9 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use miette::{ErrReport, WrapErr};
+
+use crate::errors::TaleError;
 
 /// Tracks the state of a single file being tailed
 #[derive(Debug, Clone)]
@@ -40,7 +42,7 @@ impl FileState {
     }
 
     /// Create a new FileState and immediately refresh it
-    pub fn new_and_refresh(path: PathBuf) -> Result<Self> {
+    pub fn new_and_refresh(path: PathBuf) -> Result<Self, TaleError> {
         let mut state = Self::new(path);
         state.refresh()?;
         Ok(state)
@@ -52,7 +54,7 @@ impl FileState {
     }
 
     /// Update the file state by checking the current file system state
-    pub fn refresh(&mut self) -> Result<bool> {
+    pub fn refresh(&mut self) -> Result<bool, ErrReport> {
         let metadata = match std::fs::metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -64,7 +66,8 @@ impl FileState {
                 return Ok(was_available); // Changed if it was previously available
             }
             Err(err) => {
-                return Err(err).with_context(|| format!("Failed to get metadata for {}", self.path.display()));
+                return Err(TaleError::from(err))
+                    .with_context(|| format!("Failed to get metadata for {}", self.path.display()))?;
             }
         };
 
@@ -125,29 +128,22 @@ impl FileState {
     }
 
     /// Read new lines from the file starting from the current position
-    pub fn read_new_lines(&mut self) -> Result<Vec<String>> {
+    pub fn read_new_lines(&mut self) -> Result<Vec<String>, ErrReport> {
         if !self.available || !self.has_new_data() {
             return Ok(Vec::new());
         }
 
-        let mut file =
-            File::open(&self.path).with_context(|| format!("Failed to open file: {}", self.path.display()))?;
+        let mut file = File::open(&self.path).map_err(TaleError::from)?;
 
         // Seek to our current position
-        file.seek(SeekFrom::Start(self.position)).with_context(|| {
-            format!(
-                "Failed to seek to position {} in {}",
-                self.position,
-                self.path.display()
-            )
-        })?;
+        file.seek(SeekFrom::Start(self.position)).map_err(TaleError::from)?;
 
         let mut reader = BufReader::new(file);
         let mut lines = Vec::new();
 
         loop {
             let mut line = String::new();
-            match reader.read_line(&mut line)? {
+            match reader.read_line(&mut line).map_err(TaleError::from)? {
                 0 => break, // EOF reached
                 bytes_read => {
                     // Remove trailing newline if present
@@ -182,7 +178,7 @@ impl FileStateManager {
     }
 
     /// Add a file to be tracked
-    pub fn add_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn add_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), TaleError> {
         let path = path.as_ref().to_path_buf();
         let state = FileState::new_and_refresh(path.clone())?;
         self.states.insert(path, state);
@@ -191,7 +187,7 @@ impl FileStateManager {
 
     /// Add a file to be tracked, starting from the end. No offsets for
     /// MULTIBALL.
-    pub fn add_file_for_tailing<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn add_file_for_tailing<P: AsRef<Path>>(&mut self, path: P) -> Result<(), TaleError> {
         let path = path.as_ref().to_path_buf();
         let mut state = FileState::new_and_refresh(path.clone())?;
         state.set_position(state.size);
@@ -215,7 +211,7 @@ impl FileStateManager {
     }
 
     /// Refresh all file states
-    pub fn refresh_all(&mut self) -> Result<Vec<PathBuf>> {
+    pub fn refresh_all(&mut self) -> Result<Vec<PathBuf>, TaleError> {
         let mut changed_files = Vec::new();
 
         for (path, state) in &mut self.states {
@@ -243,7 +239,7 @@ impl FileStateManager {
     }
 
     /// Read new lines from all files that have new data
-    pub fn read_new_lines(&mut self) -> Result<Vec<(PathBuf, Vec<String>)>> {
+    pub fn read_new_lines(&mut self) -> Result<Vec<(PathBuf, Vec<String>)>, TaleError> {
         let mut all_new_lines = Vec::new();
 
         for (path, state) in &mut self.states {
@@ -259,7 +255,7 @@ impl FileStateManager {
     }
 
     /// Read all lines from all tracked files (for static multi-file reading)
-    pub fn read_all_lines(&mut self) -> Result<Vec<(PathBuf, Vec<String>)>> {
+    pub fn read_all_lines(&mut self) -> Result<Vec<(PathBuf, Vec<String>)>, crate::errors::TaleError> {
         let mut all_lines = Vec::new();
 
         for (path, state) in &self.states {
@@ -275,23 +271,21 @@ impl FileStateManager {
     }
 
     /// Read all lines from a specific file from the beginning
-    fn read_all_lines_from_file(state: &FileState) -> Result<Vec<String>> {
+    fn read_all_lines_from_file(state: &FileState) -> Result<Vec<String>, TaleError> {
         if !state.available {
             return Ok(Vec::new());
         }
 
-        let mut file =
-            File::open(&state.path).with_context(|| format!("Failed to open file: {}", state.path.display()))?;
+        let mut file = File::open(&state.path).map_err(TaleError::from)?;
 
         // Always start from the beginning for static reading
-        file.seek(SeekFrom::Start(0))
-            .with_context(|| format!("Failed to seek to beginning of {}", state.path.display()))?;
+        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
 
         let reader = BufReader::new(file);
         let mut lines = Vec::new();
 
         for line_result in reader.lines() {
-            let line = line_result.with_context(|| format!("Failed to read line from {}", state.path.display()))?;
+            let line = line_result.map_err(TaleError::from)?;
             lines.push(line);
         }
 
