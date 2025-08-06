@@ -656,23 +656,23 @@ mod tests {
 
     #[test]
     fn layout_one() {
-        // Try to set config, but don't fail if it's already set by another test
-        let _ = config::set(ConfigOpts::default());
+        // Use with_config to isolate this test
+        config::with_config(ConfigOpts::default(), || {
+            let logline = r##"{
+                "timestamp": "2025-08-01T10:45:03Z",
+                "level": "CRITICAL",
+                "message": "Database query failed",
+                "query": "SELECT * FROM users WHERE id = ?",
+                "error_code": "ER_NO_SUCH_TABLE",
+                "elapsed": "250ms"
+            }"##;
+            let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
+            let stringy = parsed.to_string();
+            let lines: Vec<&str> = stringy.split('\n').collect();
+            let length = lines.len();
 
-        let logline = r##"{
-            "timestamp": "2025-08-01T10:45:03Z",
-            "level": "CRITICAL",
-            "message": "Database query failed",
-            "query": "SELECT * FROM users WHERE id = ?",
-            "error_code": "ER_NO_SUCH_TABLE",
-            "elapsed": "250ms"
-        }"##;
-        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("this is a valid log message");
-        let stringy = parsed.to_string();
-        let lines: Vec<&str> = stringy.split('\n').collect();
-        let length = lines.len();
-
-        assert_eq!(length, 4);
+            assert_eq!(length, 4);
+        });
     }
 
     #[test]

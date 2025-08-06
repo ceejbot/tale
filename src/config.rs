@@ -3,58 +3,6 @@
 //! questions without having to pass batons around.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
-
-/// Hold our configuration.
-pub static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
-
-pub fn config() -> &'static ConfigOpts {
-    CONFIG
-        .get()
-        .expect("programmer error: tried to access configuration before it was set")
-}
-
-pub fn set(input: ConfigOpts) -> Result<(), ConfigOpts> {
-    CONFIG.set(input)
-}
-
-// The public interface for config
-
-pub fn tailing() -> bool {
-    config().tailing
-}
-
-pub fn sticky() -> bool {
-    config().sticky
-}
-
-pub fn offset() -> i64 {
-    config().offset
-}
-
-pub fn offset_unit() -> OffsetUnit {
-    config().offset_unit
-}
-
-pub fn show_time() -> bool {
-    config().show_time
-}
-
-pub fn batch_window_ms() -> u64 {
-    config().batch_window_ms
-}
-
-pub fn force_chunked() -> bool {
-    config().force_chunked
-}
-
-pub fn disable_chunked() -> bool {
-    config().disable_chunked
-}
-
-pub fn mode() -> &'static InputMode {
-    &config().mode
-}
 
 /// A sensible holder for our configuration.
 #[derive(Debug, Clone, Default)]
@@ -90,13 +38,172 @@ pub enum InputMode {
     MultiFile { paths: Vec<PathBuf> },
 }
 
+// Production implementation: Simple OnceLock for fast access
+#[cfg(not(test))]
+mod runtime {
+    use super::ConfigOpts;
+    use std::sync::OnceLock;
+
+    /// Hold our configuration - production uses simple OnceLock
+    pub static CONFIG: OnceLock<ConfigOpts> = OnceLock::new();
+
+    /// Get reference to configuration
+    pub fn config() -> &'static ConfigOpts {
+        CONFIG
+            .get()
+            .expect("programmer error: tried to access configuration before it was set")
+    }
+
+    /// Set configuration - one-time initialization only
+    pub fn set(input: ConfigOpts) -> Result<(), ConfigOpts> {
+        CONFIG.set(input)
+    }
+}
+
+// Test implementation: Thread-local storage for isolation
+#[cfg(test)]
+mod runtime {
+    use super::ConfigOpts;
+    use std::cell::RefCell;
+
+    /// Test implementation uses thread-local storage for isolation
+    thread_local! {
+        pub static TEST_CONFIG: RefCell<Option<ConfigOpts>> = RefCell::new(None);
+    }
+
+    /// Get configuration - returns owned value from thread-local storage
+    pub fn config() -> ConfigOpts {
+        TEST_CONFIG.with(|cfg| cfg.borrow().as_ref().cloned().unwrap_or_else(|| ConfigOpts::default()))
+    }
+
+    /// Set configuration - can be called multiple times per thread
+    pub fn set(input: ConfigOpts) -> Result<(), ConfigOpts> {
+        TEST_CONFIG.with(|cfg| {
+            *cfg.borrow_mut() = Some(input);
+        });
+        Ok(())
+    }
+
+    /// Test-only helper to modify config in place
+    pub fn update<F>(f: F)
+    where
+        F: FnOnce(&mut ConfigOpts),
+    {
+        TEST_CONFIG.with(|cfg| {
+            let mut borrowed = cfg.borrow_mut();
+            if borrowed.is_none() {
+                *borrowed = Some(ConfigOpts::default());
+            }
+            if let Some(ref mut config) = borrowed.as_mut() {
+                f(config);
+            }
+        });
+    }
+
+    /// Test-only helper for temporary config changes
+    pub fn with_config<F, R>(new_config: ConfigOpts, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        // Save old config
+        let old_config = TEST_CONFIG.with(|cfg| cfg.borrow().clone());
+
+        // Set new config
+        TEST_CONFIG.with(|cfg| {
+            *cfg.borrow_mut() = Some(new_config);
+        });
+
+        // Run the test
+        let result = f();
+
+        // Restore old config
+        TEST_CONFIG.with(|cfg| {
+            *cfg.borrow_mut() = old_config;
+        });
+
+        result
+    }
+}
+
+// Re-export the runtime implementation as the public API
+pub use runtime::{config, set};
+
+#[cfg(test)]
+pub use runtime::{update, with_config};
+
+// Public convenience accessors - these work with both implementations
+pub fn tailing() -> bool {
+    #[cfg(not(test))]
+    return config().tailing;
+    #[cfg(test)]
+    return config().tailing;
+}
+
+pub fn sticky() -> bool {
+    #[cfg(not(test))]
+    return config().sticky;
+    #[cfg(test)]
+    return config().sticky;
+}
+
+pub fn offset() -> i64 {
+    #[cfg(not(test))]
+    return config().offset;
+    #[cfg(test)]
+    return config().offset;
+}
+
+pub fn offset_unit() -> OffsetUnit {
+    #[cfg(not(test))]
+    return config().offset_unit;
+    #[cfg(test)]
+    return config().offset_unit;
+}
+
+pub fn show_time() -> bool {
+    #[cfg(not(test))]
+    return config().show_time;
+    #[cfg(test)]
+    return config().show_time;
+}
+
+pub fn batch_window_ms() -> u64 {
+    #[cfg(not(test))]
+    return config().batch_window_ms;
+    #[cfg(test)]
+    return config().batch_window_ms;
+}
+
+pub fn force_chunked() -> bool {
+    #[cfg(not(test))]
+    return config().force_chunked;
+    #[cfg(test)]
+    return config().force_chunked;
+}
+
+pub fn disable_chunked() -> bool {
+    #[cfg(not(test))]
+    return config().disable_chunked;
+    #[cfg(test)]
+    return config().disable_chunked;
+}
+
+pub fn mode() -> InputMode {
+    #[cfg(not(test))]
+    return config().mode.clone();
+    #[cfg(test)]
+    return config().mode;
+}
+
+// Implementation details - these don't need to be split per runtime
 fn is_glob(maybe: &str) -> bool {
     maybe.contains('?') || maybe.contains('*') || maybe.contains('[')
 }
 
 /// Amongst our list of files to tail we might have a glob pattern
 /// to expand. If so, we find matches. Otherwise, we add that path
-/// to our list directly.
+/// to our list directly. However, for most people their shells will
+/// already have expanded globs, so this feature feels marginal.
 fn expand_globs(args: &[String]) -> anyhow::Result<Vec<PathBuf>> {
     let mut all_paths = Vec::new();
 
@@ -123,6 +230,8 @@ fn handle_possible_paths(args: &[String]) -> Vec<PathBuf> {
     if let Ok(paths) = expand_globs(args) {
         return paths;
     }
+    // we only get here if none of the paths exist.
+    // TODO we should respond with an error with a good message.
 
     todo!()
 }
@@ -249,5 +358,141 @@ mod tests {
                 PathBuf::from("fixtures/windows_line_endings.log")
             ]
         );
+    }
+
+    #[test]
+    fn test_config_modification() {
+        let initial_config = ConfigOpts {
+            tailing: false,
+            sticky: false,
+            offset: 10,
+            offset_unit: OffsetUnit::Lines,
+            show_time: false,
+            batch_window_ms: 250,
+            mode: InputMode::Stdin,
+            force_chunked: false,
+            disable_chunked: false,
+        };
+
+        // Use with_config to isolate this test
+        with_config(initial_config.clone(), || {
+            // Test the update function
+            update(|cfg| {
+                cfg.tailing = true;
+                cfg.offset = 20;
+                cfg.show_time = true;
+            });
+
+            // Verify the changes
+            assert_eq!(tailing(), true);
+            assert_eq!(offset(), 20);
+            assert_eq!(show_time(), true);
+        });
+    }
+
+    #[test]
+    fn test_with_config() {
+        let original_config = ConfigOpts::default();
+        set(original_config.clone()).expect("should set config");
+
+        let original_offset = offset();
+        let original_tailing = tailing();
+
+        // Test with temporary config
+        let result = with_config(
+            ConfigOpts {
+                tailing: true,
+                sticky: false,
+                offset: 42,
+                offset_unit: OffsetUnit::Bytes,
+                show_time: true,
+                batch_window_ms: 500,
+                mode: InputMode::Stdin,
+                force_chunked: true,
+                disable_chunked: false,
+            },
+            || {
+                // Inside this closure, config should be changed
+                assert_eq!(offset(), 42);
+                assert_eq!(tailing(), true);
+                assert_eq!(batch_window_ms(), 500);
+                assert_eq!(force_chunked(), true);
+
+                // Return a value to verify the closure ran
+                "test_successful"
+            },
+        );
+
+        // After the closure, config should be restored
+        assert_eq!(offset(), original_offset);
+        assert_eq!(tailing(), original_tailing);
+        assert_eq!(result, "test_successful");
+    }
+
+    #[test]
+    fn test_concurrent_access() {
+        use std::thread;
+        use std::time::Duration;
+
+        // Set different configs in different threads to verify isolation
+        let handles: Vec<_> = (0..3)
+            .map(|i| {
+                thread::spawn(move || {
+                    let config = ConfigOpts {
+                        offset: i * 10,
+                        tailing: i % 2 == 0,
+                        show_time: i % 2 == 1,
+                        ..ConfigOpts::default()
+                    };
+
+                    set(config).expect("should set config");
+
+                    // Sleep a bit to let other threads potentially interfere
+                    thread::sleep(Duration::from_millis(10));
+
+                    // Verify our config is still correct
+                    assert_eq!(offset(), i * 10);
+                    assert_eq!(tailing(), i % 2 == 0);
+                    assert_eq!(show_time(), i % 2 == 1);
+
+                    i
+                })
+            })
+            .collect();
+
+        // Collect results
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_all_accessors() {
+        let test_config = ConfigOpts {
+            tailing: true,
+            sticky: true,
+            offset: -100,
+            offset_unit: OffsetUnit::Blocks,
+            show_time: true,
+            batch_window_ms: 1000,
+            mode: InputMode::SingleFile {
+                path: PathBuf::from("test.log"),
+            },
+            force_chunked: true,
+            disable_chunked: false,
+        };
+
+        // Use with_config to isolate this test
+        with_config(test_config, || {
+            // Test all accessor functions
+            assert_eq!(tailing(), true);
+            assert_eq!(sticky(), true);
+            assert_eq!(offset(), -100);
+            assert!(matches!(offset_unit(), OffsetUnit::Blocks));
+            assert_eq!(show_time(), true);
+            assert_eq!(batch_window_ms(), 1000);
+            assert!(matches!(mode(), InputMode::SingleFile { .. }));
+            assert_eq!(force_chunked(), true);
+            assert_eq!(disable_chunked(), false);
+        });
     }
 }

@@ -51,15 +51,15 @@ pub mod constants {
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
 /// A tail-compatible tool for pretty-printing ndjson files, especially logs.
 ///
-/// It displays the colorfully-formatted contents of FILE, by default stdin,
-/// to stdout. Tale highlights the fields likely to appear in log lines for
+/// Tale displays the colorfully-formatted contents of FILE, by default stdin,
+/// to stdout. It highlights the fields likely to appear in log lines for
 /// servers, such as level or severity, the log message, timestamps, and so
 /// on. It also displays every field that shows up in the log line, using
 /// the color theme you have set in your terminal.
 ///
 /// Lines that are invalid json are printed intact, without formatting.
 ///
-/// `tail` can also follow and display more than one file at a time, with
+/// Tale can also follow and display more than one file at a time, with
 /// header decoration options like `tail`'s.
 struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
@@ -99,7 +99,7 @@ struct Args {
     /// large files.
     #[arg(long)]
     chunked: bool,
-    /// Disable chunked file processing, always use streaming (may use more
+    /// Disable chunked file processing and always use streaming (might use more
     /// memory).
     #[arg(long, conflicts_with = "chunked")]
     no_chunked: bool,
@@ -163,14 +163,14 @@ async fn main() -> anyhow::Result<()> {
     let mode = config::mode();
     match mode {
         InputMode::Stdin => readers::handle_stdin(),
-        InputMode::SingleFile { path } => readers::handle_file(path),
+        InputMode::SingleFile { path } => readers::handle_file(&path),
         InputMode::MultiFile { paths } => {
             if args.follow || args.sticky {
                 // Multi-file tailing mode
-                multiplexed::handle_tailing(paths.to_vec()).await
+                multiplexed::handle_tailing(paths).await
             } else {
                 // Multi-file static mode (read all files once)
-                multiplexed::handle_static(paths.to_vec())
+                multiplexed::handle_static(paths)
             }
         }
     }
