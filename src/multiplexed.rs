@@ -4,14 +4,14 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use bytes::{Buf, BytesMut};
 
+use crate::errors::TaleError;
 use crate::logpatterns::*;
 use crate::{config, process_line};
 
 /// Handle multi-file static mode (read all files once, no following)
-pub fn handle_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
+pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
     use crate::file_state::FileStateManager;
 
     let mut file_manager = FileStateManager::new();
@@ -35,7 +35,7 @@ pub fn handle_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
                     Err(_) => {
                         // If parsing as Printable fails, it's either invalid JSON or doesn't match any
                         // variant Use the Text fallback in either case
-                        Printable::Text(line_content.clone())
+                        Printable::Text(line_content.to_owned())
                     }
                 }
             };
@@ -62,7 +62,7 @@ pub fn handle_static(paths: Vec<PathBuf>) -> anyhow::Result<()> {
 }
 
 /// Handle multi-file tailing mode (watch for changes and follow)
-pub async fn handle_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
+pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
     use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
     use crate::watcher::{WatchEvent, create_watcher};
 
@@ -108,8 +108,9 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> anyhow::Result<()> {
                                             path.clone(),
                                             line_num as u64
                                         );
-                                        if line_sender.send(batched_line).is_err() {
-                                            return Err(anyhow!("Batch processor stopped"));
+                                        match line_sender.send(batched_line) {
+                                            Ok(_) => todo!(),
+                                            Err(e) => return Err(TaleError::from(e)),
                                         }
                                     }
                                 }

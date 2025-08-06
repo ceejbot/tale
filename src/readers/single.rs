@@ -4,14 +4,15 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
 use bytes::BytesMut;
+use miette::{ErrReport, Result, WrapErr};
 
-use super::{FileProcessor, create_file_processor};
+use super::FileProcessor;
 use crate::constants::*;
+use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
 pub struct SimpleFileProcessor<'a> {
@@ -25,12 +26,12 @@ pub struct SimpleFileProcessor<'a> {
 
 // TODO: finish implementing the trait; clean up.
 impl<'a> FileProcessor for SimpleFileProcessor<'a> {
-    fn process_lines<F>(&mut self, line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, _line_processor: F) -> Result<(), TaleError>
     where
-        F: FnMut(&str) -> Result<()>,
+        F: FnMut(&str) -> Result<(), TaleError>,
     {
-        let temp_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-        let temp_outlock = io::stdout().lock();
+        let _temp_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
+        let _temp_outlock = io::stdout().lock();
 
         // process_line()
 
@@ -39,7 +40,7 @@ impl<'a> FileProcessor for SimpleFileProcessor<'a> {
         todo!("Refactor existing tail() method to support callback-based processing")
     }
 
-    fn skip_lines(&mut self, count: u64) -> Result<()> {
+    fn skip_lines(&mut self, _count: u64) -> Result<(), TaleError> {
         // SimpleFileProcessor already handles this via move_to_position
         // Could extract the line-skipping logic from there
         todo!("Implement using existing offset logic")
@@ -49,12 +50,12 @@ impl<'a> FileProcessor for SimpleFileProcessor<'a> {
         self.initial_file_size
     }
 
-    fn seek(&mut self, pos: io::SeekFrom) -> anyhow::Result<u64> {
+    fn seek(&mut self, pos: io::SeekFrom) -> Result<u64, ErrReport> {
         if let Some(mut f) = self.file.as_ref() {
-            Ok(f.seek(pos)?)
+            Ok(f.seek(pos).map_err(TaleError::from)?)
         } else {
-            let mut file = File::open(&self.fpath)?;
-            let actual = file.seek(pos)?;
+            let mut file = File::open(&self.fpath).map_err(TaleError::from)?;
+            let actual = file.seek(pos).map_err(TaleError::from)?;
             self.file = Some(file);
             Ok(actual)
         }
@@ -94,7 +95,12 @@ impl<'a> SimpleFileProcessor<'a> {
     /// left at the correct position to begin reading. IMPORTANT: The caller
     /// has to do any last by-lines forward seeking by themselves. This is a
     /// weakness in the internal API.
-    pub fn move_to_position(&mut self, offset: i64, units: config::OffsetUnit, tailing: bool) -> anyhow::Result<File> {
+    pub fn move_to_position(
+        &mut self,
+        offset: i64,
+        units: config::OffsetUnit,
+        tailing: bool,
+    ) -> Result<File, TaleError> {
         let mut file = File::open(&self.fpath)?;
         // Short circuit if there is no work to do.
         let file_size = file.seek(io::SeekFrom::End(0))?;
@@ -155,7 +161,7 @@ impl<'a> SimpleFileProcessor<'a> {
     /// line to begin our pretty-printing. This is the seek backwards version.
     /// It is made entirely of edge cases. Used only by
     /// FileProcessor::move_to_position().
-    fn move_n_lines_back(&mut self, file: &mut File, line_count: u64) -> anyhow::Result<u64> {
+    fn move_n_lines_back(&mut self, file: &mut File, line_count: u64) -> Result<u64, TaleError> {
         let file_size = file.seek(io::SeekFrom::End(0))?;
         if file_size == 0 {
             return Ok(0);
@@ -211,29 +217,29 @@ impl<'a> SimpleFileProcessor<'a> {
     }
 
     /// Process a single line through the formatting pipeline
-    pub fn process_line(&mut self, line: &str) -> anyhow::Result<()> {
+    pub fn process_line(&mut self, line: &str) -> Result<(), TaleError> {
         process_line(line, &mut self.buffer, &mut self.outlock).with_context(|| "Failed to process line")?;
         self.count += 1;
         self.flush_if_needed()
     }
 
     /// Flush output if we've processed enough lines
-    pub fn flush_if_needed(&mut self) -> anyhow::Result<()> {
+    pub fn flush_if_needed(&mut self) -> Result<(), TaleError> {
         if self.count >= FLUSH_LINE_COUNT {
-            self.outlock.flush().context("Failed to flush stdout")?;
+            self.outlock.flush()?;
             self.count = 0;
         }
         Ok(())
     }
 
     /// Force flush output
-    pub fn flush(&mut self) -> anyhow::Result<()> {
-        self.outlock.flush().context("Failed to flush stdout")?;
+    pub fn flush(&mut self) -> Result<(), TaleError> {
+        self.outlock.flush()?;
         self.count = 0;
         Ok(())
     }
 
-    pub fn tail(&mut self) -> anyhow::Result<()> {
+    pub fn tail(&mut self) -> Result<(), TaleError> {
         let tailing = config::tailing();
         let offset_unit = config::offset_unit();
         let offset = config::offset();

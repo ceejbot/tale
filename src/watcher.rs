@@ -6,11 +6,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use miette::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::errors::*;
 use crate::file_state::FileStateManager;
 
 /// Events that can occur during file watching
@@ -76,7 +77,7 @@ impl MultiFileWatcher {
     }
 
     /// Add files to be watched
-    pub async fn add_files<I, P>(&mut self, paths: I) -> Result<()>
+    pub async fn add_files<I, P>(&mut self, paths: I) -> Result<(), TaleError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<Path>,
@@ -89,7 +90,7 @@ impl MultiFileWatcher {
     }
 
     /// Start watching files and return a stream of events
-    pub async fn watch(&mut self) -> Result<mpsc::UnboundedReceiver<WatchEvent>> {
+    pub async fn watch(&mut self) -> Result<mpsc::UnboundedReceiver<WatchEvent>, TaleError> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
 
         // Create a channel for notify events
@@ -106,7 +107,7 @@ impl MultiFileWatcher {
         for file_path in self.file_manager.tracked_files() {
             watcher
                 .watch(file_path, RecursiveMode::NonRecursive)
-                .with_context(|| format!("Failed to watch file: {}", file_path.display()))?;
+                .map_err(|e| TaleError::NotifyError(e))?;
         }
 
         // Spawn a task to process notify events and convert them to WatchEvents
@@ -139,7 +140,7 @@ impl MultiFileWatcher {
     }
 
     /// Stop watching all files
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> Result<(), TaleError> {
         // Drop the watcher to stop file watching
         self._watcher = None;
 

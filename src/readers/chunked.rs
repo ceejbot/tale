@@ -10,10 +10,11 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use miette::{ErrReport, Result};
 
 use super::FileProcessor;
 use crate::constants::READ_BUFFER_SIZE;
+use crate::errors::TaleError;
 
 /// Configuration for FileChunk processing
 #[derive(Debug, Clone)]
@@ -129,16 +130,13 @@ pub struct ChunkedFileReader {
 
 impl ChunkedFileReader {
     /// Create a new ChunkedFileReader
-    pub fn new<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
         let path = path.as_ref().to_path_buf();
-        let mut file = File::open(&path).with_context(|| format!("Failed to open file: {}", path.display()))?;
+        let mut file = File::open(&path).map_err(TaleError::from)?;
 
-        let file_size = file
-            .seek(SeekFrom::End(0))
-            .with_context(|| "Failed to determine file size")?;
+        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
 
-        file.seek(SeekFrom::Start(0))
-            .with_context(|| "Failed to seek to start of file")?;
+        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
 
         Ok(Self {
             file,
@@ -151,11 +149,9 @@ impl ChunkedFileReader {
     }
 
     /// Create a ChunkedFileReader with optimal configuration for the file
-    pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, ErrReport> {
         let path = path.as_ref().to_path_buf();
-        let file_size = std::fs::metadata(&path)
-            .with_context(|| format!("Failed to get file metadata: {}", path.display()))?
-            .len();
+        let file_size = std::fs::metadata(&path).map_err(TaleError::from)?.len();
 
         let chunk_size = optimal_chunk_size(file_size, None);
         let config = ChunkConfig {
@@ -164,7 +160,7 @@ impl ChunkedFileReader {
             low_memory_mode: chunk_size <= 8192,
         };
 
-        Self::new(path, config)
+        Ok(Self::new(path, config)?)
     }
 
     /// Get the file size
@@ -194,10 +190,7 @@ impl ChunkedFileReader {
         );
 
         let mut buffer = vec![0u8; chunk_size];
-        let bytes_read = self
-            .file
-            .read(&mut buffer)
-            .with_context(|| "Failed to read chunk from file")?;
+        let bytes_read = self.file.read(&mut buffer).map_err(TaleError::from)?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -229,8 +222,8 @@ impl ChunkedFileReader {
     }
 
     /// Seek to a specific position in the file
-    pub fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
-        let new_pos = self.file.seek(pos).with_context(|| "Failed to seek in file")?;
+    pub fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+        let new_pos = self.file.seek(pos).map_err(TaleError::from)?;
 
         self.current_position = new_pos;
         self.pending_data.clear(); // Clear pending data after seek
@@ -239,16 +232,16 @@ impl ChunkedFileReader {
     }
 
     /// Reset to the beginning of the file
-    pub fn reset(&mut self) -> Result<()> {
+    pub fn reset(&mut self) -> Result<(), TaleError> {
         self.seek(SeekFrom::Start(0))?;
         Ok(())
     }
 }
 
 impl FileProcessor for ChunkedFileReader {
-    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<()>
+    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<(), TaleError>
     where
-        F: FnMut(&str) -> Result<()>,
+        F: FnMut(&str) -> Result<(), TaleError>,
     {
         while let Some(chunk) = self.read_chunk()? {
             for line in chunk.lines() {
@@ -258,7 +251,7 @@ impl FileProcessor for ChunkedFileReader {
         Ok(())
     }
 
-    fn skip_lines(&mut self, count: u64) -> Result<()> {
+    fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         let mut lines_skipped = 0u64;
         while lines_skipped < count {
             if let Some(chunk) = self.read_chunk()? {
@@ -294,7 +287,7 @@ impl FileProcessor for ChunkedFileReader {
         self.file_size
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
         self.seek(pos)
     }
 

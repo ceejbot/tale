@@ -19,8 +19,10 @@ use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
 use config::{ConfigOpts, config};
 use logpatterns::*;
+use miette::Result as MietteResult;
 
 use crate::config::InputMode;
+use crate::errors::TaleError;
 
 pub mod constants {
     use super::Duration;
@@ -122,7 +124,7 @@ fn v3_styles() -> Styles {
 
 /// Process a single line of input (JSON or plain text) and write to output.
 #[inline]
-pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> anyhow::Result<()> {
+pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> Result<(), TaleError> {
     match serde_json::from_str::<Printable<'_>>(line) {
         Ok(message) => {
             message.write(buffer);
@@ -154,14 +156,14 @@ pub fn strip_line_ending(line: &mut String) {
 
 /// Parse our options and do the thing.
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> MietteResult<()> {
     let args = Args::parse();
 
     let config = ConfigOpts::new(&args);
     config::set(config).expect("Quite improbably failed to set config OnceLock on process start.");
 
     let mode = config::mode();
-    match mode {
+    let result = match mode {
         InputMode::Stdin => readers::handle_stdin(),
         InputMode::SingleFile { path } => readers::handle_file(&path),
         InputMode::MultiFile { paths } => {
@@ -173,7 +175,10 @@ async fn main() -> anyhow::Result<()> {
                 multiplexed::handle_static(paths)
             }
         }
-    }
+    };
+
+    // Convert TaleError to miette Report for display
+    result.map_err(miette::Report::from)
 }
 
 #[cfg(test)]

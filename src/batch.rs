@@ -8,9 +8,10 @@ use std::collections::BinaryHeap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
+
+use crate::errors::TaleError;
 // use tokio::time::timeout;
 
 const TIMESTAMP_FIELDS: [&str; 3] = ["timestamp", "time", "ts"];
@@ -46,7 +47,7 @@ impl BatchedLine {
     }
 
     /// Try to parse this line and extract timestamp information
-    pub fn parse(&mut self) -> Result<()> {
+    pub fn parse(&mut self) -> Result<(), TaleError> {
         // Try to parse as JSON
         match serde_json::from_str::<serde_json::Value>(&self.content) {
             Ok(json_value) => {
@@ -192,10 +193,13 @@ impl BatchProcessor {
     /// Start processing batches
     pub async fn start(
         &mut self,
-    ) -> Result<(
-        mpsc::UnboundedSender<BatchedLine>,
-        mpsc::UnboundedReceiver<Vec<BatchedLine>>,
-    )> {
+    ) -> Result<
+        (
+            mpsc::UnboundedSender<BatchedLine>,
+            mpsc::UnboundedReceiver<Vec<BatchedLine>>,
+        ),
+        TaleError,
+    > {
         let (line_sender, line_receiver) = mpsc::unbounded_channel();
         let (batch_sender, batch_receiver) = mpsc::unbounded_channel();
 
@@ -218,12 +222,12 @@ impl BatchProcessor {
     }
 
     /// Process incoming lines and emit sorted batches
-    async fn process_loop(&mut self) -> Result<()> {
+    async fn process_loop(&mut self) -> Result<(), TaleError> {
         let Some(line_receiver) = self.receiver.take() else {
-            return Err(anyhow!("could not take a line receiver"));
+            return Err(TaleError::LineReceiver);
         };
         let Some(batch_sender) = self.sender.take() else {
-            return Err(anyhow!("could not take a batch sender from our sender"));
+            return Err(TaleError::BatchSender);
         };
         let mut line_receiver = line_receiver;
 
@@ -277,7 +281,7 @@ impl BatchProcessor {
     }
 
     /// Emit the current batch
-    fn emit_batch(&mut self, batch_sender: &mpsc::UnboundedSender<Vec<BatchedLine>>) -> Result<()> {
+    fn emit_batch(&mut self, batch_sender: &mpsc::UnboundedSender<Vec<BatchedLine>>) -> Result<(), TaleError> {
         if self.pending_lines.is_empty() {
             return Ok(());
         }
@@ -292,16 +296,11 @@ impl BatchProcessor {
         self.window_start = None;
 
         // Send the sorted batch
-        if batch_sender.send(sorted_lines).is_err() {
-            // Receiver dropped; return error to stop processing
-            return Err(anyhow!("Batch receiver dropped"));
-        }
-
-        Ok(())
+        Ok(batch_sender.send(sorted_lines)?)
     }
 
     /// Force emit all pending lines as a batch
-    fn emit_all_pending(&mut self, batch_sender: &mpsc::UnboundedSender<Vec<BatchedLine>>) -> Result<()> {
+    fn emit_all_pending(&mut self, batch_sender: &mpsc::UnboundedSender<Vec<BatchedLine>>) -> Result<(), TaleError> {
         self.emit_batch(batch_sender)
     }
 }
