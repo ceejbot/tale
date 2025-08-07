@@ -24,31 +24,6 @@ use miette::Result as MietteResult;
 use crate::config::InputMode;
 use crate::errors::TaleError;
 
-pub mod constants {
-    use super::Duration;
-
-    /// How long we wait before flushing data to stdout when tailing.
-    pub const TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
-
-    /// Flush stdout when we've written at least this many lines.
-    pub const FLUSH_LINE_COUNT: u16 = 40;
-
-    /// The traditional unix block size in bytes.
-    pub const BLOCK_SIZE: u64 = 512;
-
-    /// Buffer size for reading from stdin/files.
-    pub const READ_BUFFER_SIZE: usize = 8192;
-
-    /// Default capacity for line strings.
-    pub const LINE_CAPACITY: usize = 512;
-
-    /// Default capacity for output byte buffers.
-    pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
-
-    /// Memory limit for line buffering in negative line offset mode.
-    pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
-}
-
 #[derive(Debug, Clone, Parser)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
 /// A tail-compatible tool for pretty-printing ndjson files, especially logs.
@@ -118,6 +93,31 @@ fn v3_styles() -> Styles {
         .usage(AnsiColor::Green.on_default())
         .literal(AnsiColor::Green.on_default())
         .placeholder(AnsiColor::Green.on_default())
+}
+
+pub mod constants {
+    use super::Duration;
+
+    /// How long we wait before flushing data to stdout when tailing.
+    pub const TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
+    /// Flush stdout when we've written at least this many lines.
+    pub const FLUSH_LINE_COUNT: u16 = 40;
+
+    /// The traditional unix block size in bytes.
+    pub const BLOCK_SIZE: u64 = 512;
+
+    /// Buffer size for reading from stdin/files.
+    pub const READ_BUFFER_SIZE: usize = 8192;
+
+    /// Default capacity for line strings.
+    pub const LINE_CAPACITY: usize = 512;
+
+    /// Default capacity for output byte buffers.
+    pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
+
+    /// Memory limit for line buffering in negative line offset mode.
+    pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
 }
 
 // TODO: move the two inlines somewhere sensible.

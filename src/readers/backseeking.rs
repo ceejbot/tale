@@ -159,7 +159,8 @@ impl<'a> BackSeekingProcessor<'a> {
 
     /// Find the byte offset from the beginning of the file for the start of the
     /// line to begin our pretty-printing. This is the seek backwards version.
-    /// It is made entirely of edge cases. Used only by FileProcessor::move_to_position().
+    /// It is made entirely of edge cases. Used only by
+    /// FileProcessor::move_to_position().
     fn move_n_lines_back(&mut self, file: &mut File, line_count: u64) -> Result<u64, TaleError> {
         let file_size = file.seek(io::SeekFrom::End(0))?;
         if file_size == 0 {

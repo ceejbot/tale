@@ -3,9 +3,10 @@
 //! files in a flat hierarchy, which is likely my problem and not anything
 //! wrong with lots of files in a src directory, you know? Anyway.
 
+mod adapting; // the chunking strategies; will figure out naming later
 mod backseeking;
 mod buffered;
-mod chunked;
+mod chunked; // the file processor
 mod stdin;
 
 use std::io::{self, SeekFrom, Write};
@@ -59,7 +60,8 @@ pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
         e // Return original error if not a recognized pattern
     })?;
 
-    // BackSeekingProcessor handles its own special cases (negative offsets, bytes, blocks)
+    // BackSeekingProcessor handles its own special cases (negative offsets, bytes,
+    // blocks)
     if let FileProcessorType::BackSeeking(mut backseeker) = processor {
         return backseeker.tail();
     }
@@ -519,20 +521,23 @@ mod tests {
         };
 
         let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
-        
+
         // Skip first 3 lines
         reader.skip_lines(3)?;
-        
+
         // Collect remaining lines
         let mut remaining_lines = Vec::new();
         reader.process_lines(|line| {
             remaining_lines.push(line.to_string());
             Ok(())
         })?;
-        
+
         // Should have lines 4-10
-        assert_eq!(remaining_lines, vec!["line4", "line5", "line6", "line7", "line8", "line9", "line10"]);
-        
+        assert_eq!(
+            remaining_lines,
+            vec!["line4", "line5", "line6", "line7", "line8", "line9", "line10"]
+        );
+
         Ok(())
     }
 
@@ -549,10 +554,10 @@ mod tests {
         };
 
         let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
-        
+
         // Skip exactly 5 lines (should stop mid-chunk)
         reader.skip_lines(5)?;
-        
+
         // Get next line
         let mut next_lines = Vec::new();
         reader.process_lines(|line| {
@@ -562,12 +567,12 @@ mod tests {
             }
             Ok(())
         })?;
-        
+
         // Should get lines "f" and "g"
         assert!(next_lines.len() >= 2);
         assert_eq!(next_lines[0], "f");
         assert_eq!(next_lines[1], "g");
-        
+
         Ok(())
     }
 }

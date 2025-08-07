@@ -16,6 +16,8 @@ pub struct ConfigOpts {
     pub mode: InputMode,
     pub force_chunked: bool,
     pub disable_chunked: bool,
+    pub no_file_names: bool,
+    pub all_file_names: bool,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -316,6 +318,8 @@ impl ConfigOpts {
             mode,
             force_chunked: args.chunked,
             disable_chunked: args.no_chunked,
+            no_file_names: args.quiet,
+            all_file_names: args.verbose,
         }
     }
 }
@@ -377,6 +381,7 @@ mod tests {
             mode: InputMode::Stdin,
             force_chunked: false,
             disable_chunked: false,
+            ..Default::default()
         };
 
         // Use with_config to isolate this test
@@ -415,6 +420,7 @@ mod tests {
                 mode: InputMode::Stdin,
                 force_chunked: true,
                 disable_chunked: false,
+                ..Default::default()
             },
             || {
                 // Inside this closure, config should be changed
@@ -484,6 +490,7 @@ mod tests {
             },
             force_chunked: true,
             disable_chunked: false,
+            ..Default::default()
         };
 
         // Use with_config to isolate this test

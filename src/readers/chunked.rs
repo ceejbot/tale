@@ -253,16 +253,16 @@ impl FileProcessor for ChunkedFileReader {
 
     fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         let mut lines_skipped = 0u64;
-        
+
         while lines_skipped < count {
             if let Some(chunk) = self.read_chunk()? {
                 // Count lines in this chunk and track position
                 let mut lines_in_chunk = 0u64;
-                
+
                 for (i, &byte) in chunk.data.iter().enumerate() {
                     if byte == b'\n' {
                         lines_in_chunk += 1;
-                        
+
                         // Check if we've skipped enough lines
                         if lines_skipped + lines_in_chunk == count {
                             // We need to keep the rest of this chunk for processing
@@ -275,7 +275,7 @@ impl FileProcessor for ChunkedFileReader {
                         }
                     }
                 }
-                
+
                 // Entire chunk was consumed
                 lines_skipped += lines_in_chunk;
             } else {
@@ -283,7 +283,7 @@ impl FileProcessor for ChunkedFileReader {
                 break;
             }
         }
-        
+
         Ok(())
     }
 

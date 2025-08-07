@@ -7,6 +7,7 @@
 
 use std::fmt::Display;
 use std::path::PathBuf;
+use std::sync::{LazyLock, RwLock};
 
 use bytes::BytesMut;
 
@@ -129,10 +130,39 @@ impl Ord for SortKey {
     }
 }
 
+struct FileNameTracker {
+    last: RwLock<String>,
+    every: bool,
+    on_swap: bool,
+}
+
+impl FileNameTracker {
+    pub fn new() -> Self {
+        let cfg = crate::config::config();
+        Self {
+            last: RwLock::new(String::default()),
+            every: cfg.all_file_names,
+            on_swap: !cfg.no_file_names,
+        }
+    }
+}
+
+static TRACKER: LazyLock<FileNameTracker> = LazyLock::new(|| FileNameTracker::new());
+
 impl<'a> PrettyPrintable for SourcedLine<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        // For now, just delegate to the wrapped Printable
-        // TODO: Add source file display based on config flags
+        if TRACKER.every {
+            buffer.extend_from_slice(b"==> ");
+            buffer.extend_from_slice(self.source_file_name().as_bytes());
+            buffer.extend_from_slice(b" <==\n");
+        } else if TRACKER.on_swap
+            && self.source_file_name() != *TRACKER.last.read().expect("FileNameTracker lock poisoned")
+        {
+            buffer.extend_from_slice(b"==> ");
+            buffer.extend_from_slice(self.source_file_name().as_bytes());
+            buffer.extend_from_slice(b" <==\n");
+            *TRACKER.last.write().expect("FileNameTracker lock poisoned") = self.source_file_name().to_owned();
+        }
         self.parsed.write(buffer)
     }
     fn cells(&self) -> Vec<String> {
