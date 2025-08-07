@@ -3,19 +3,19 @@
 //! files in a flat hierarchy, which is likely my problem and not anything
 //! wrong with lots of files in a src directory, you know? Anyway.
 
+mod backseeking;
 mod buffered;
 mod chunked;
-mod single;
 mod stdin;
 
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+pub use backseeking::*;
 pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
 use miette::ErrReport;
-pub use single::*;
 pub use stdin::*;
 
 use crate::constants::*;
@@ -59,13 +59,12 @@ pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
         e // Return original error if not a recognized pattern
     })?;
 
-    // TODO smooth this out
-    if let FileProcessorType::Simple(mut simple) = processor {
-        // we can stop thinking because this handles everything.
-        return simple.tail();
+    // BackSeekingProcessor handles its own special cases (negative offsets, bytes, blocks)
+    if let FileProcessorType::BackSeeking(mut backseeker) = processor {
+        return backseeker.tail();
     }
 
-    // now do what the chunked handler used to and I hate everything.
+    // For buffered and chunked processors, handle offset scenarios
     let offset = config::offset();
     let offset_unit = config::offset_unit();
 
@@ -82,14 +81,6 @@ pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
             processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
 
             outlock.flush()?;
-        }
-
-        // Negative line offset: seek to position and process
-        (false, config::OffsetUnit::Lines) if offset < 0 => {
-            // For negative offsets, we need to use the existing seek logic
-            // Fall back to the original implementation for now
-            let mut old_processor = SimpleFileProcessor::new(fpath.to_path_buf());
-            old_processor.tail()?;
         }
 
         // Zero offset or other cases: process entire file
@@ -129,8 +120,8 @@ pub fn create_file_processor<P: AsRef<Path>>(
     // it already handles them reasonably (though its chunks might not be
     // optimal). This is something I need to refactor away.
     if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes | config::OffsetUnit::Blocks) {
-        let processor = SimpleFileProcessor::new(PathBuf::from(path));
-        return Ok(FileProcessorType::Simple(processor));
+        let processor = BackSeekingProcessor::new(PathBuf::from(path));
+        return Ok(FileProcessorType::BackSeeking(processor));
     }
 
     if use_chunked {
@@ -167,7 +158,7 @@ pub trait FileProcessor {
 pub enum FileProcessorType<'a> {
     Buffered(BufferedFileProcessor),
     Chunked(ChunkedFileReader),
-    Simple(SimpleFileProcessor<'a>),
+    BackSeeking(BackSeekingProcessor<'a>),
 }
 
 impl<'a> FileProcessor for FileProcessorType<'a> {
@@ -178,7 +169,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         match self {
             FileProcessorType::Buffered(processor) => processor.process_lines(line_processor),
             FileProcessorType::Chunked(processor) => processor.process_lines(line_processor),
-            FileProcessorType::Simple(processor) => processor.process_lines(line_processor),
+            FileProcessorType::BackSeeking(processor) => processor.process_lines(line_processor),
         }
     }
 
@@ -186,7 +177,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         match self {
             FileProcessorType::Buffered(processor) => processor.skip_lines(count),
             FileProcessorType::Chunked(processor) => processor.skip_lines(count),
-            FileProcessorType::Simple(processor) => processor.skip_lines(count),
+            FileProcessorType::BackSeeking(processor) => processor.skip_lines(count),
         }
     }
 
@@ -194,7 +185,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         match self {
             FileProcessorType::Buffered(processor) => processor.file_size(),
             FileProcessorType::Chunked(processor) => processor.file_size(),
-            FileProcessorType::Simple(processor) => processor.file_size(),
+            FileProcessorType::BackSeeking(processor) => processor.file_size(),
         }
     }
 
@@ -202,7 +193,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         match self {
             FileProcessorType::Buffered(processor) => processor.seek(pos),
             FileProcessorType::Chunked(processor) => processor.seek(pos),
-            FileProcessorType::Simple(processor) => processor.seek(pos),
+            FileProcessorType::BackSeeking(processor) => processor.seek(pos),
         }
     }
 
@@ -210,7 +201,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         match self {
             FileProcessorType::Buffered(processor) => processor.position(),
             FileProcessorType::Chunked(processor) => processor.position(),
-            FileProcessorType::Simple(processor) => processor.position(),
+            FileProcessorType::BackSeeking(processor) => processor.position(),
         }
     }
 }
@@ -263,7 +254,7 @@ mod tests {
                 let result = create_file_processor(&fp, Some(1_000_000_000))
                     .expect("should create processor for negative offset");
                 assert!(
-                    matches!(result, FileProcessorType::Simple(_)),
+                    matches!(result, FileProcessorType::BackSeeking(_)),
                     "Negative offset should use Simple processor"
                 );
             },
@@ -282,7 +273,7 @@ mod tests {
                 let result =
                     create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for byte offset");
                 assert!(
-                    matches!(result, FileProcessorType::Simple(_)),
+                    matches!(result, FileProcessorType::BackSeeking(_)),
                     "Byte offset should use Simple processor"
                 );
             },
@@ -301,7 +292,7 @@ mod tests {
                 let result =
                     create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for block offset");
                 assert!(
-                    matches!(result, FileProcessorType::Simple(_)),
+                    matches!(result, FileProcessorType::BackSeeking(_)),
                     "Block offset should use Simple processor"
                 );
             },
@@ -511,6 +502,72 @@ mod tests {
             assert_eq!(lines, vec!["line1", "line2", "line3"]);
         });
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunked_skip_lines() -> Result<(), TaleError> {
+        // Create test data with more lines to test chunk boundaries
+        let test_data = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n";
+        let temp_file = create_test_file(test_data);
+
+        // Use small chunk size to test boundary handling
+        let config = ChunkConfig {
+            chunk_size: 15, // Small enough to split across chunks
+            overlap_size: 2,
+            low_memory_mode: true,
+        };
+
+        let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
+        
+        // Skip first 3 lines
+        reader.skip_lines(3)?;
+        
+        // Collect remaining lines
+        let mut remaining_lines = Vec::new();
+        reader.process_lines(|line| {
+            remaining_lines.push(line.to_string());
+            Ok(())
+        })?;
+        
+        // Should have lines 4-10
+        assert_eq!(remaining_lines, vec!["line4", "line5", "line6", "line7", "line8", "line9", "line10"]);
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunked_skip_lines_partial_chunk() -> Result<(), TaleError> {
+        // Test case where skip_lines needs to stop in the middle of a chunk
+        let test_data = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
+        let temp_file = create_test_file(test_data);
+
+        let config = ChunkConfig {
+            chunk_size: 8, // Will create multiple small chunks
+            overlap_size: 1,
+            low_memory_mode: true,
+        };
+
+        let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
+        
+        // Skip exactly 5 lines (should stop mid-chunk)
+        reader.skip_lines(5)?;
+        
+        // Get next line
+        let mut next_lines = Vec::new();
+        reader.process_lines(|line| {
+            next_lines.push(line.to_string());
+            if next_lines.len() >= 2 {
+                return Ok(()); // Just get first 2 lines after skip
+            }
+            Ok(())
+        })?;
+        
+        // Should get lines "f" and "g"
+        assert!(next_lines.len() >= 2);
+        assert_eq!(next_lines[0], "f");
+        assert_eq!(next_lines[1], "g");
+        
         Ok(())
     }
 }

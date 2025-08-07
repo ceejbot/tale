@@ -253,33 +253,37 @@ impl FileProcessor for ChunkedFileReader {
 
     fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
         let mut lines_skipped = 0u64;
+        
         while lines_skipped < count {
             if let Some(chunk) = self.read_chunk()? {
-                let chunk_lines: Vec<&str> = chunk.lines().collect();
-                let lines_in_chunk = chunk_lines.len() as u64;
-
-                if lines_skipped + lines_in_chunk <= count {
-                    // Skip entire chunk
-                    lines_skipped += lines_in_chunk;
-                } else {
-                    // Skip partial chunk - we need to be more careful here
-                    // For now, we'll process the remaining lines individually
-                    let lines_to_skip_in_chunk = count - lines_skipped;
-
-                    // Process remaining lines in this chunk
-                    while let Some(_line) = chunk_lines.iter().skip(lines_to_skip_in_chunk as usize).next() {
-                        // do something with the line.
-
-                        // This approach isn't optimal - in a real implementation,
-                        // we'd want to adjust the file position more precisely
-                        break;
+                // Count lines in this chunk and track position
+                let mut lines_in_chunk = 0u64;
+                
+                for (i, &byte) in chunk.data.iter().enumerate() {
+                    if byte == b'\n' {
+                        lines_in_chunk += 1;
+                        
+                        // Check if we've skipped enough lines
+                        if lines_skipped + lines_in_chunk == count {
+                            // We need to keep the rest of this chunk for processing
+                            // Save the unprocessed portion as pending data
+                            let position_after_newline = i + 1;
+                            if position_after_newline < chunk.data.len() {
+                                self.pending_data = chunk.data[position_after_newline..].to_vec();
+                            }
+                            return Ok(());
+                        }
                     }
-                    break;
                 }
+                
+                // Entire chunk was consumed
+                lines_skipped += lines_in_chunk;
             } else {
-                break; // EOF
+                // EOF reached before skipping all requested lines
+                break;
             }
         }
+        
         Ok(())
     }
 

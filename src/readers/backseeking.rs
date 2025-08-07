@@ -15,7 +15,7 @@ use crate::constants::*;
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
-pub struct SimpleFileProcessor<'a> {
+pub struct BackSeekingProcessor<'a> {
     fpath: PathBuf,
     initial_file_size: u64,
     file: Option<File>,
@@ -25,7 +25,7 @@ pub struct SimpleFileProcessor<'a> {
 }
 
 // TODO: finish implementing the trait; clean up.
-impl<'a> FileProcessor for SimpleFileProcessor<'a> {
+impl<'a> FileProcessor for BackSeekingProcessor<'a> {
     fn process_lines<F>(&mut self, _line_processor: F) -> Result<(), TaleError>
     where
         F: FnMut(&str) -> Result<(), TaleError>,
@@ -41,7 +41,7 @@ impl<'a> FileProcessor for SimpleFileProcessor<'a> {
     }
 
     fn skip_lines(&mut self, _count: u64) -> Result<(), TaleError> {
-        // SimpleFileProcessor already handles this via move_to_position
+        // BackSeekingProcessor already handles this via move_to_position
         // Could extract the line-skipping logic from there
         todo!("Implement using existing offset logic")
     }
@@ -70,7 +70,7 @@ impl<'a> FileProcessor for SimpleFileProcessor<'a> {
     }
 }
 
-impl<'a> SimpleFileProcessor<'a> {
+impl<'a> BackSeekingProcessor<'a> {
     pub fn new(fpath: PathBuf) -> Self {
         // briefly open the file and figure out its size
         let file_size = if let Ok(mut file) = File::open(&fpath) {
@@ -159,8 +159,7 @@ impl<'a> SimpleFileProcessor<'a> {
 
     /// Find the byte offset from the beginning of the file for the start of the
     /// line to begin our pretty-printing. This is the seek backwards version.
-    /// It is made entirely of edge cases. Used only by
-    /// FileProcessor::move_to_position().
+    /// It is made entirely of edge cases. Used only by FileProcessor::move_to_position().
     fn move_n_lines_back(&mut self, file: &mut File, line_count: u64) -> Result<u64, TaleError> {
         let file_size = file.seek(io::SeekFrom::End(0))?;
         if file_size == 0 {
@@ -329,7 +328,7 @@ mod tests {
             .expect("Failed to write to temp file");
 
         let pathbuf = PathBuf::from(temp_file.path());
-        let mut processor = SimpleFileProcessor::new(pathbuf);
+        let mut processor = BackSeekingProcessor::new(pathbuf);
         let mut file = File::open(temp_file.path()).expect("Failed to open temp file");
 
         // Test getting last 2 lines (should start after "line3\n")
@@ -364,7 +363,7 @@ mod tests {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
         let pathbuf = PathBuf::from(temp_file.path());
-        let mut processor = SimpleFileProcessor::new(pathbuf);
+        let mut processor = BackSeekingProcessor::new(pathbuf);
         let mut file = File::open(temp_file.path()).expect("Failed to open temp file");
 
         let pos = processor

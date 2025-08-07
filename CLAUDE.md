@@ -28,14 +28,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Code Architecture
 
 ### Core Structure
-The application is now split into eight specialized modules:
+The application is organized into specialized modules and a readers subsystem:
 
 1. **`src/main.rs`** - Application entry point and mode handlers:
    - Tokio async runtime coordination
    - Multi-file static and tailing mode implementations
-   - Single file handling with backward seeking
-   - Stdin processing with time-based flushing
-   - Process coordination between watcher, batcher, and output
+   - Command-line argument parsing with clap
+   - Process coordination between components
 
 2. **`src/config.rs`** - Centralized configuration management:
    - `ConfigOpts` struct with comprehensive tail-compatible options
@@ -44,20 +43,21 @@ The application is now split into eight specialized modules:
    - Support for `-f`/`-F`, offset modes (`-n`, `-c`, `-b`), and batch windows
    - `InputMode` enum distinguishing stdin, single-file, and multi-file modes
 
-3. **`src/loglines.rs`** - High-performance log parsing and formatting:
-   - `Printable` enum for different log types with boxing for memory efficiency
-   - `Canonical` struct for strict, well-structured HTTP logs (25-34% faster)
+3. **`src/logpatterns/`** - Log parsing and formatting subsystem:
+   - `patterns.rs` - `Printable` enum for different log types with memory-efficient boxing
+   - `Canonical` struct for strict HTTP logs (25-34% faster)
    - `Message` struct for flexible structured log entries with aliases
-   - `GenericJson` for arbitrary JSON objects
-   - Direct buffer writing with pre-compiled ANSI sequences
-   - Zero-copy deserialization using `Cow<'a, str>`
+   - `formatting.rs` - Direct buffer writing with pre-compiled ANSI sequences
+   - `columns.rs` - Custom column layout engine with ANSI-aware width calculation
+   - `sourced.rs` - Wrapper for multi-file source tracking
 
-4. **`src/columns.rs`** - Custom column layout engine:
-   - High-performance column layout algorithm replacing `term_grid`
-   - ANSI-aware width calculation for colored text
-   - Direct buffer writing (zero intermediate allocations)
-   - Configurable padding and intelligent line wrapping
-   - Comprehensive test coverage (22 tests)
+4. **`src/readers/`** - File processing abstraction layer:
+   - `mod.rs` - `FileProcessor` trait and processor selection logic
+   - `buffered.rs` - `BufferedFileProcessor` for small files with forward-only reading
+   - `chunked.rs` - `ChunkedFileReader` for memory-efficient large file processing
+   - `backseeking.rs` - `BackSeekingProcessor` for tail-like backward seeking (handles negative offsets)
+   - `stdin.rs` - `StdinProcessor` for consolidated stdin handling with offset support
+   - Smart processor selection based on file size and offset requirements
 
 5. **`src/file_state.rs`** - File state tracking for multi-file tailing:
    - Individual file position tracking with inode-based rotation detection
@@ -77,12 +77,12 @@ The application is now split into eight specialized modules:
    - Async processing pipeline with configurable batch windows
    - Support for mixed timestamped/non-timestamped log lines
 
-8. **`src/simple.rs`** - Single-source stdin and file processing:
-   - `StdinProcessor` struct for consolidated stdin handling patterns
-   - Complete offset support: positive (`+N`) and negative (`-N`) for lines, bytes, blocks
-   - `CircularByteBuffer` for efficient last-N-bytes operations
-   - Smart overshoot handling for byte-based operations
-   - File reading with backward seeking for tail functionality
+8. **`src/errors.rs`** - Rich error handling with thiserror + miette:
+   - Comprehensive error types with diagnostic information
+   - File errors with similarity suggestions (edit distance algorithm)
+   - JSON errors with source location tracking
+   - I/O errors with proper context
+   - Color-coded error messages using `owo-colors`
 
 ### Key Data Structures
 
@@ -105,6 +105,13 @@ The application is now split into eight specialized modules:
 - `Message(Box<Message<'a>>)` - Flexible log parsing
 - `Json(GenericJson)` - Generic JSON objects
 - Enum size optimized from 360 → ~40 bytes via boxing
+
+**BackSeekingProcessor struct** - Handles backward seeking and tail-like behavior:
+- Specialized for negative offsets and byte/block-based operations
+- Efficient backward line seeking without loading entire file
+- Memory-bounded approach for large files
+- Supports all tail offset modes: lines, bytes, blocks (positive and negative)
+- Primary processor for traditional tail functionality
 
 **StdinProcessor struct** - Consolidated stdin processing patterns:
 - Encapsulates stdin/stdout locks, line buffers, and formatting pipeline
@@ -133,6 +140,8 @@ The application is now split into eight specialized modules:
 - `async-watcher` - Async wrapper for notify integration
 - `futures` - Stream utilities for async coordination
 - `glob` - Glob pattern matching for file expansion
+- `thiserror` - Ergonomic error type definitions
+- `miette` - Rich error diagnostics with source location tracking
 - `ripline` - Available for future I/O optimizations (not currently used)
 
 ### Output Format
@@ -159,7 +168,7 @@ Strict linting is enforced:
 - `unsafe_code = "deny"`
 - `unwrap_used = "deny"` (Clippy)
 - Additional rust lints: `future_incompatible = "deny"`, `trivial_casts = "warn"`, `rust_2018_idioms = "warn"`
-- Uses `anyhow` for error handling instead of unwrap/expect
+- Uses `thiserror` + `miette` for rich error handling with diagnostics
 
 ### Performance Optimizations Applied
 
@@ -251,19 +260,39 @@ The application is highly optimized and fully functional with:
 2. **Additional offset modes** - Consider time-based offsets for log analysis
 3. **Enhanced format support** - Add support for other structured log formats
 
-## Recent Work (2025-01-08)
+## Recent Work
 
-**Major Refactoring Completed**: StdinProcessor consolidation
-- All stdin processing logic moved into clean `StdinProcessor` abstraction
-- Eliminated ~80 lines of duplicate code
-- Fixed edge cases (empty buffer handling, overshoot processing)
-- Added comprehensive test coverage (9 new tests)
-- Improved error handling with better contexts
-- All functionality preserved, 40 tests passing
+### 2025-01-08: Error Handling & FileChunk Phase 1
 
-**Key Files Modified**:
-- `src/simple.rs` - Complete refactor with new `StdinProcessor` and `CircularByteBuffer`
-- `src/main.rs` - Added constants module with buffer sizes and limits
-- Tests added for edge cases, circular buffer logic, and overshoot handling
+**Error Handling Improvements**: Migrated from anyhow to thiserror + miette
+- Created comprehensive error types in `src/errors.rs`
+- Rich diagnostic information with helpful suggestions
+- File errors show similar file suggestions using edit distance algorithm
+- JSON errors with source location tracking
+- Color-coded error messages for better UX
 
-**Status**: Ready for next development phase (FileChunk implementation or cleanup work)
+**FileChunk Architecture Phase 1 Completed**:
+- Renamed `SimpleFileProcessor` → `BackSeekingProcessor` for clarity
+- Renamed `single.rs` → `backseeking.rs` to match processor purpose
+- Fixed `skip_lines()` implementation in `ChunkedFileReader` 
+  - Properly handles partial chunk consumption
+  - Maintains correct pending_data state
+  - Added comprehensive test coverage
+- Cleaned up `handle_file()` integration
+  - Removed redundant fallback code
+  - Clear processor selection based on capabilities
+- Updated all references and documentation
+
+**Module Organization Improvements**:
+- Clear separation between processor types:
+  - `BufferedFileProcessor`: Simple forward reading for small files
+  - `ChunkedFileReader`: Memory-efficient processing for large files  
+  - `BackSeekingProcessor`: Handles backward seeking for tail-like behavior
+- Each processor has a single, well-defined purpose
+
+**Tests Added**: 
+- Chunked skip_lines with boundary conditions
+- Partial chunk consumption
+- All 10 reader tests passing
+
+**Status**: FileChunk core functionality complete, ready for Phase 2 enhancements
