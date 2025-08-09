@@ -23,6 +23,7 @@ use miette::Result as MietteResult;
 
 use crate::config::InputMode;
 use crate::errors::TaleError;
+use crate::readers::Strategy;
 
 #[derive(Debug, Clone, Parser)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
@@ -72,6 +73,8 @@ struct Args {
     /// Batch window size for multi-file tailing (in milliseconds).
     #[arg(long, default_value = "250")]
     window: u64,
+
+    // TODO These are options we should consider making dev-only.
     /// Force use of chunked file processing for better memory efficiency on
     /// large files.
     #[arg(long)]
@@ -80,7 +83,15 @@ struct Args {
     /// memory).
     #[arg(long, conflicts_with = "chunked")]
     no_chunked: bool,
-
+    /// Disable adaptive chunking
+    #[arg(short, long)]
+    adaptive: bool,
+    /// Choose a specific chunk strategy for testing
+    #[arg(short = 's', long)]
+    chunk_strategy: Strategy,
+    // Set memory limit
+    #[arg(short, long)]
+    max_memory: usize,
     /// Arguments: (offset) [file ...] where offset can be +N, -N, or N.
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
@@ -118,6 +129,9 @@ pub mod constants {
 
     /// Memory limit for line buffering in negative line offset mode.
     pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
+
+    /// The initial chunk size to use for adaptive chunked readers.
+    pub const INITIAL_CHUNK_SIZE: usize = 32 * 1024; // 32K bytes maybe???
 }
 
 // TODO: move the two inlines somewhere sensible.
@@ -209,6 +223,9 @@ mod tests {
             window: 250,
             chunked: false,
             no_chunked: false,
+            adaptive: false,
+            chunk_strategy: Strategy::default(),
+            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);
@@ -228,6 +245,9 @@ mod tests {
             window: 250,
             chunked: false,
             no_chunked: false,
+            adaptive: false,
+            chunk_strategy: Strategy::default(),
+            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);
@@ -247,6 +267,9 @@ mod tests {
             window: 250,
             chunked: false,
             no_chunked: false,
+            adaptive: false,
+            chunk_strategy: Strategy::default(),
+            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
         };
         let config = ConfigOpts::new(&args);

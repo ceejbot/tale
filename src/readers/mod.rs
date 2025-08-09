@@ -12,6 +12,7 @@ mod stdin;
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+pub use adapting::*;
 pub use backseeking::*;
 pub use buffered::*;
 use bytes::BytesMut;

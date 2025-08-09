@@ -13,8 +13,10 @@ use std::path::{Path, PathBuf};
 use miette::{ErrReport, Result};
 
 use super::FileProcessor;
+use super::adapting::*;
 use crate::constants::READ_BUFFER_SIZE;
 use crate::errors::TaleError;
+use crate::readers::Strategy;
 
 /// Configuration for FileChunk processing
 #[derive(Debug, Clone)]
@@ -119,13 +121,24 @@ pub fn optimal_chunk_size(file_size: u64, available_memory: Option<usize>) -> us
 }
 
 /// Reader that processes files in chunks with line boundary handling
+#[derive(Debug)]
 pub struct ChunkedFileReader {
+    /// An open file pointer we're reading from.
     file: File,
+    /// The size of the file we're reading.
     file_size: u64,
+    /// Our current position in the file we're reading.
     current_position: u64,
+    /// Current chunk configuration
     config: ChunkConfig,
+    /// The path of the file we're reading from
     path: PathBuf,
-    pending_data: Vec<u8>, // Data from previous chunk that didn't end at line boundary
+    /// Data from previous chunk that didn't end at line boundary
+    pending_data: Vec<u8>,
+    /// What's the strategy, Kenneth?
+    strategy: Strategy,
+    /// Tracking how we're doing
+    metrics: ChunkMetrics,
 }
 
 impl ChunkedFileReader {
@@ -137,6 +150,7 @@ impl ChunkedFileReader {
         let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
 
         file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
+        let strategy = Strategy::default(); // static strategy
 
         Ok(Self {
             file,
@@ -145,6 +159,8 @@ impl ChunkedFileReader {
             config,
             path,
             pending_data: Vec::new(),
+            strategy, // for the moment
+            metrics: ChunkMetrics::new(),
         })
     }
 
@@ -184,13 +200,23 @@ impl ChunkedFileReader {
             return Ok(None);
         }
 
+        // TODO collect metrics
+        // we need to count passes through here and every N passes
+        // through; collect metrics on current perf
+        if self.strategy.should_adapt(&self.metrics) {
+            let new_size = self.strategy.adapt_size(&self.metrics, self.config.chunk_size);
+            self.config.chunk_size = new_size;
+        }
+
         let chunk_size = std::cmp::min(
             self.config.chunk_size,
             (self.file_size - self.current_position) as usize,
         );
 
         let mut buffer = vec![0u8; chunk_size];
+        let start = std::time::Instant::now();
         let bytes_read = self.file.read(&mut buffer).map_err(TaleError::from)?;
+        let read_duration = start.elapsed();
 
         if bytes_read == 0 {
             return Ok(None);
@@ -218,6 +244,12 @@ impl ChunkedFileReader {
             }
         }
 
+        // Count lines in the chunk for metrics
+        let line_count = chunk.data.iter().filter(|&&b| b == b'\n').count() as u64;
+
+        // Record metrics
+        self.metrics
+            .record_chunk_processing(chunk.size(), read_duration, line_count);
         Ok(Some(chunk))
     }
 
@@ -226,7 +258,8 @@ impl ChunkedFileReader {
         let new_pos = self.file.seek(pos).map_err(TaleError::from)?;
 
         self.current_position = new_pos;
-        self.pending_data.clear(); // Clear pending data after seek
+        // we've moved and no longer care what we read earlier
+        self.pending_data.clear();
 
         Ok(new_pos)
     }

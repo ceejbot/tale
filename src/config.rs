@@ -326,6 +326,8 @@ impl ConfigOpts {
 
 #[cfg(test)]
 mod tests {
+    use crate::readers::Strategy;
+
     use super::*;
 
     #[test]
@@ -343,6 +345,9 @@ mod tests {
             chunked: false,
             no_chunked: false,
             args: vec!["-4".to_string()],
+            adaptive: false,
+            chunk_strategy: Strategy::default(),
+            max_memory: 10_000_000_000,
         };
         let config = ConfigOpts::new(&args);
         assert_eq!(config.offset, -5);
