@@ -20,6 +20,7 @@ impl IsStrategy for ConservativeStrategy {
     fn adapt_size(&mut self, _metrics: &super::ChunkMetrics, current_size: usize) -> usize {
         let max = config().max_memory;
         match detect_memory_pressure(max) {
+            MemoryPressure::Unknown => current_size,
             MemoryPressure::None => current_size,
             MemoryPressure::Low => todo!(),
             MemoryPressure::Medium => todo!(),
@@ -60,11 +61,8 @@ impl ConservativeConfig {
         let total_for_files = ConservativeConfig::PER_FILE_MB * self.num_files;
 
         // System limit: 10% of RAM or 200MB, whichever is smaller
-        let system_limit = if let Some(total_ram_mb) = crate::metrics::get_system_ram_mb() {
-            std::cmp::min(total_ram_mb / 10, ConservativeConfig::MEMORY_CEILING_MB)
-        } else {
-            ConservativeConfig::MEMORY_CEILING_MB // Conservative fallback
-        };
+        let total_ram_mb = crate::metrics::get_system_ram_mb();
+        let system_limit = std::cmp::min(total_ram_mb / 10, ConservativeConfig::MEMORY_CEILING_MB);
 
         std::cmp::min(total_for_files, system_limit)
     }

@@ -90,6 +90,7 @@ impl IsStrategy for AdaptiveStrategy {
     fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
         let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
 
+        /*
         #[cfg(debug_assertions)]
         {
             let speed = metrics.processing_speed_mbps();
@@ -99,6 +100,7 @@ impl IsStrategy for AdaptiveStrategy {
                 metrics.chunks_seen, current_size, speed, trend, pressure
             );
         }
+        */
 
         // PRESSURE RELEASE VALVE - immediate drop to minimum
         if matches!(pressure, MemoryPressure::Critical) {

@@ -134,6 +134,7 @@ mod tests {
         };
 
         let strategy = Strategy::from_config(&config);
+        eprintln!("{strategy:#?}");
         assert!(matches!(strategy, Strategy::Adaptive(_)));
     }
 }

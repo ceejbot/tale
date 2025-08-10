@@ -203,8 +203,8 @@ impl ChunkedFileReader {
         if self.strategy.should_adapt(&self.metrics) {
             let new_size = self.strategy.adapt_size(&self.metrics, self.config.chunk_size);
             if new_size != self.config.chunk_size {
-                #[cfg(debug_assertions)]
-                eprintln!("Chunk size: {} -> {}", self.config.chunk_size, new_size);
+                // #[cfg(debug_assertions)]
+                // eprintln!("Chunk size: {} -> {}", self.config.chunk_size, new_size);
                 self.config.chunk_size = new_size;
             }
         }

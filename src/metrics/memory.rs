@@ -10,6 +10,7 @@ use crate::constants::MEMORY_LIMIT_MB;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryPressure {
+    Unknown,
     None,     // < 50% usage
     Low,      // 50-70%
     Medium,   // 70-85%
@@ -18,86 +19,33 @@ pub enum MemoryPressure {
 }
 
 pub fn detect_memory_pressure(limit_mb: Option<usize>) -> MemoryPressure {
-    let our_usage_mb = process_memory_mb();
-    let limit = limit_mb.unwrap_or(MEMORY_LIMIT_MB);
+    memimpl::detect_memory_pressure(limit_mb)
+}
 
-    let percent = (our_usage_mb as f64 / limit as f64) * 100.0;
-
-    match percent {
-        p if p < 50.0 => MemoryPressure::None,
-        p if p < 70.0 => MemoryPressure::Low,
-        p if p < 85.0 => MemoryPressure::Medium,
-        p if p < 95.0 => MemoryPressure::High,
-        _ => MemoryPressure::Critical,
+impl From<f64> for MemoryPressure {
+    fn from(p: f64) -> Self {
+        match p {
+            p if p < 50.0 => MemoryPressure::None,
+            p if p < 70.0 => MemoryPressure::Low,
+            p if p < 85.0 => MemoryPressure::Medium,
+            p if p < 95.0 => MemoryPressure::High,
+            _ => MemoryPressure::Critical,
+        }
     }
 }
 
-#[cfg(not(feature = "sysinfo"))]
-pub mod memimpl {
-
-    use memory_stats::*;
-
-    use super::*;
-
-    impl From<f64> for MemoryPressure {
-        fn from(p: f64) -> Self {
-            match p {
-                p if p < 50.0 => MemoryPressure::None,
-                p if p < 70.0 => MemoryPressure::Low,
-                p if p < 85.0 => MemoryPressure::Medium,
-                p if p < 95.0 => MemoryPressure::High,
-                _ => MemoryPressure::Critical,
-            }
-        }
-    }
-
-    /// Are we under memory pressure?
-    pub fn detect_memory_pressure(max_allowed_mb: Option<usize>) -> MemoryPressure {
-        let Some(stats) = memory_stats() else {
-            return MemoryPressure::None;
-        };
-        let max_allowed = max_allowed_mb.unwrap_or(MEMORY_LIMIT_MB) * 1024;
-        if stats.physical_mem > max_allowed {
-            MemoryPressure::Critical
-        } else {
-            let percent = (stats.physical_mem * 100) as f64 / max_allowed as f64;
-            MemoryPressure::from(percent)
-        }
-    }
-
-    // TODO placeholder!
-    pub fn get_system_ram_mb() -> Option<usize> {
-        Some(8 * 1024 * 1024 * 1024)
-    }
-
-    /// Available memory in megabytes.
-    pub fn available_memory_mb() -> usize {
-        // TODO look at system memory
-        let our_usage_mb = process_memory_mb();
-        MEMORY_LIMIT_MB.saturating_sub(our_usage_mb)
-    }
-
-    /// Process RSS in megabytes
-    pub fn process_memory_mb() -> usize {
-        let Some(stats) = memory_stats() else {
-            return 0;
-        };
-        stats.physical_mem / 1024
-    }
-}
-
-#[cfg(feature = "sysinfo")]
 pub mod memimpl {
     use std::sync::{LazyLock, Mutex, OnceLock};
 
     use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
     use super::*;
+    use crate::config;
 
     static SYSTEM: LazyLock<Mutex<System>> = LazyLock::new(|| {
         let processes = ProcessRefreshKind::nothing().with_cpu().with_memory();
         let memory = MemoryRefreshKind::nothing().with_ram();
-        let cpu = CpuRefreshKind::nothing().with_cpu_usage();
+        let cpu = CpuRefreshKind::nothing(); // .with_cpu_usage();
         let refreshes = RefreshKind::nothing()
             .with_cpu(cpu)
             .with_memory(memory)
@@ -117,7 +65,7 @@ pub mod memimpl {
         } else {
             match sysinfo::get_current_pid() {
                 Ok(p) => {
-                    PID.set(p.clone());
+                    PID.set(p.clone()).expect("unexpected failure to store PID in oncelock");
                     Some(p)
                 }
                 Err(_) => None,
@@ -136,19 +84,52 @@ pub mod memimpl {
         let mut system = system();
         system.refresh_processes(to_update, true);
         let Some(process) = system.process(pid) else {
-            return MemoryPressure::None;
+            return MemoryPressure::Unknown;
         };
-        let rss = process.memory();
-        let max_allowed = config().max_memory;
-        let avail = system.available_memory();
-        let total = system.total_memory();
+        let rss = process.memory() as usize;
+        let max_allowed =
+            max_allowed_mb.unwrap_or_else(|| config().max_memory.unwrap_or(MEMORY_LIMIT_MB)) * 1024 * 1024;
+        let free = system.free_memory() as usize;
+        // let total = system.total_memory();
+        // eprintln!("memory: rss={rss}; max_allowed={max_allowed}; free={free};");
 
-        todo!();
+        if rss > max_allowed {
+            MemoryPressure::Critical
+        } else if rss > free {
+            MemoryPressure::Critical
+        } else {
+            let percent = (rss * 100) as f64 / max_allowed as f64;
+            MemoryPressure::from(percent)
+        }
+    }
+
+    pub fn get_system_ram_mb() -> usize {
+        let system = system();
+        system.total_memory() as usize
     }
 
     pub fn available_memory_mb() -> usize {
-        let system = system();
-        // TODO
+        let Some(pid) = pid() else {
+            return 0;
+        };
+        let proc_list = vec![pid];
+        let to_update = ProcessesToUpdate::Some(proc_list.as_slice());
+        let mut system = system();
+        system.refresh_processes(to_update, true);
+        let free = system.free_memory() as usize;
+        let total = system.total_memory() as usize;
+
+        let Some(process) = system.process(pid) else {
+            return (free / 1024) as usize;
+        };
+        let rss = process.memory() as usize;
+        let max_allowed = config().max_memory.unwrap_or(MEMORY_LIMIT_MB);
+
+        eprintln!("system: total={total} free={free}; process: rss={rss}; max mb: {max_allowed}");
+
+        let remaining_budget = (max_allowed * 1024).saturating_sub(rss);
+        let available = std::cmp::min(free, remaining_budget);
+        available / 1024
     }
 
     pub fn process_memory_mb() -> usize {
@@ -159,6 +140,6 @@ pub mod memimpl {
         let Some(process) = system.process(pid) else {
             return 0;
         };
-        process.memory()
+        process.memory() as usize
     }
 }
