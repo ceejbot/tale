@@ -11,15 +11,18 @@ mod strategies;
 
 use std::fmt::Debug;
 
-use adaptive::*;
-use memory::*;
+pub use adaptive::*;
+pub use memory::*;
 pub use metrics::*;
 pub use strategies::*;
 
-// - [ ] Create `ChunkMetrics` struct: processing_speed, memory_usage,
-//   io_wait_time, lines_per_chunk
-// - [ ] Design `AdaptationConfig` with thresholds and limits
-// - [ ] Define strategy types: `Static`, `Adaptive`, `MemoryConstrained`
+use super::ChunkedFileReader;
+
+pub fn is_memory_constrained() -> bool {
+    // Check if we're in a container, low memory system, etc.
+    // The check can get more complex than this.
+    memory::available_memory_mb() < 500
+}
 
 /// This is how a strategy advertises itself to an adaptable reader.
 pub trait ChunkStrategy {

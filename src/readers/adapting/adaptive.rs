@@ -1,39 +1,52 @@
-use crate::constants::INITIAL_CHUNK_SIZE;
-/// An adaptive chunked reader, which uses its current strategy
-/// to decide how to read incoming data. Look, don't complain that I'm
-/// overengineering a hobby project. The whole point of a hobby project
-/// is learning through overengineering. And why are you reading this
-/// comment, anyway?
-use crate::errors::TaleError;
-use crate::readers::{ChunkedFileReader, FileProcessor};
+//! An adaptive chunked reader, which uses its current strategy
+//! to decide how to read incoming data. Look, don't complain that I'm
+//! overengineering a hobby project. The whole point of a hobby project
+//! is learning through overengineering. And why are you reading this
+//! comment, anyway?
 
-use super::ChunkStrategy;
-use super::MemoryPressure;
+use super::detect_memory_pressure;
 use super::metrics::{ChunkMetrics, MovingAverage};
+use super::{ChunkStrategy, ChunkedFileReader, MemoryPressure, MetricsCollector, Trend};
+use crate::constants::INITIAL_CHUNK_SIZE;
 
-/*
-The adaptive algo works like this:
+/// Here's the reader type that can adapt.
+#[derive(Debug)]
+pub struct AdaptiveChunkReader<T>
+where
+    T: ChunkStrategy,
+{
+    reader: ChunkedFileReader,
+    controller: AdaptationController<T>,
+}
 
-Every N chunks:
-1. Collect metrics (speed, memory, I/O wait)
-2. Calculate performance trend (moving average)
-3. Check memory pressure
-4. Decision tree:
-   - If high memory pressure → shrink by shrink_factor
-   - Else if speed improving & memory ok → grow by growth_factor
-   - Else if speed degrading → shrink to find sweet spot
-   - Else → maintain current size
-5. Apply bounds (min_chunk_size, max_chunk_size)
-6. Update metrics history
+#[derive(Debug, Clone)]
+pub struct AdaptationController<T>
+where
+    T: ChunkStrategy,
+{
+    strategy: T,
+    metrics: MetricsCollector,
+    config: AdaptationConfig,
+}
 
-What is N?
-*/
+impl<T> AdaptationController<T>
+where
+    T: ChunkStrategy,
+{
+    pub fn should_adapt(&self) -> bool {
+        self.metrics.ready_to_adapt(self.config.interval)
+    }
+
+    pub fn calculate_new_size(&mut self, current: usize) -> usize {
+        let metrics = self.metrics.snapshot();
+        self.strategy.adapt_size(&metrics, current)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AdaptiveStrategy {
     config: AdaptationConfig,
     metrics_history: MovingAverage<10>,
-    chunks_since_adaptation: usize,
 }
 
 impl Default for AdaptiveStrategy {
@@ -42,48 +55,51 @@ impl Default for AdaptiveStrategy {
         Self {
             config,
             metrics_history: MovingAverage::new(),
-            chunks_since_adaptation: 0,
         }
     }
 }
 
-// Implements the decision tree you outlined
+// We adapt based on performance and memory data as we go
 impl ChunkStrategy for AdaptiveStrategy {
     fn initial_chunk_size(&self) -> usize {
-        crate::constants::INITIAL_CHUNK_SIZE
+        self.config.initial_chunk_size
     }
 
     fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
-        let pressure = super::memory::detect_memory_pressure();
-        match pressure {
-            MemoryPressure::Critical => {
-                // TODO shrink to minimum
-                // return
-            }
-            MemoryPressure::High => {
-                // shrink by shrink factor
-                // return
-            }
-            _ => {
-                // look at perf trend
-            }
+        let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
+
+        // PRESSURE RELEASE VALVE - immediate drop to minimum
+        if matches!(pressure, MemoryPressure::Critical) {
+            eprintln!("Memory critical! Dropping to minimum chunk size");
+            return self.config.min_chunk_size;
         }
-        /*
-        Decision Tree Logic:
-        1. Get memory pressure
-        2. If Critical → shrink to minimum
-        3. If High → shrink by shrink_factor
-        4. Else, check performance trend:
-           - If improving → grow by growth_factor
-           - If degrading → shrink by shrink_factor
-           - If stable → no change
-        5. Apply bounds (min/max)
-        */
-        todo!()
+
+        // High pressure - gradual reduction
+        if matches!(pressure, MemoryPressure::High) {
+            return (current_size as f64 * 0.5) as usize; // Aggressive shrink
+        }
+
+        let newsize = match pressure {
+            MemoryPressure::Critical => self.config.min_chunk_size,
+            MemoryPressure::High => (current_size as f64 * self.config.shrink_factor) as usize,
+            _ => {
+                let moving_ave = metrics.speed_moving();
+                let perf = moving_ave.trend(self.config.speed_increase_threshold);
+                match perf {
+                    Trend::Improving => (current_size as f64 * self.config.growth_factor) as usize,
+                    Trend::Degrading => (current_size as f64 * self.config.shrink_factor) as usize,
+                    Trend::Stable => current_size,
+                    Trend::Unknown => current_size,
+                }
+            }
+        };
+        let clamped = newsize.clamp(self.config.min_chunk_size, self.config.max_chunk_size);
+        self.metrics_history.push(clamped as f64);
+        clamped
     }
 
     fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
-        todo!()
+        metrics.should_adapt(self.config.interval)
     }
 }
 
@@ -95,16 +111,16 @@ pub struct AdaptationConfig {
     pub initial_chunk_size: usize, // Starting point (e.g., 32KB)
 
     // When to grow/shrink
-    pub speed_increase_threshold: f64, // If speed improves by X%, grow chunks
-    pub speed_decrease_threshold: f64, // If speed drops by X%, shrink chunks
-    pub memory_threshold_mb: usize,    // Shrink if we use more than this
+    pub speed_increase_threshold: f64,  // If speed improves by X%, grow chunks
+    pub _speed_decrease_threshold: f64, // If speed drops by X%, shrink chunks
+    pub memory_threshold_mb: usize,     // Shrink if we use more than this
 
     // How much to grow/shrink
     pub growth_factor: f64, // Multiply size by this (e.g., 1.5)
     pub shrink_factor: f64, // Multiply size by this (e.g., 0.67)
 
     // How often to check
-    pub adaptation_interval: usize, // Check every N chunks (e.g., 5)
+    pub interval: usize, // Check every N chunks (e.g., 5)
 }
 
 impl Default for AdaptationConfig {
@@ -114,45 +130,11 @@ impl Default for AdaptationConfig {
             max_chunk_size: 1024 * 1024, // 1MB
             initial_chunk_size: INITIAL_CHUNK_SIZE,
             speed_increase_threshold: Default::default(),
-            speed_decrease_threshold: Default::default(),
+            _speed_decrease_threshold: Default::default(),
             memory_threshold_mb: Default::default(),
-            growth_factor: Default::default(),
-            shrink_factor: Default::default(),
-            adaptation_interval: Default::default(),
+            growth_factor: 1.5,
+            shrink_factor: 0.67,
+            interval: 5,
         }
-    }
-}
-
-/// An adaptive input processor.
-#[derive(Debug)]
-pub struct AdaptiveProcessor {
-    // TODO
-    /// We wrap a chunked file reader.
-    chonker: ChunkedFileReader,
-}
-
-/// We must implement this.
-impl FileProcessor for AdaptiveProcessor {
-    fn process_lines<F>(&mut self, _line_processor: F) -> Result<(), TaleError>
-    where
-        F: FnMut(&str) -> Result<(), TaleError>,
-    {
-        todo!()
-    }
-
-    fn skip_lines(&mut self, _count: u64) -> Result<(), TaleError> {
-        todo!()
-    }
-
-    fn file_size(&self) -> u64 {
-        todo!()
-    }
-
-    fn seek(&mut self, _pos: std::io::SeekFrom) -> Result<u64, miette::Error> {
-        todo!()
-    }
-
-    fn position(&self) -> u64 {
-        todo!()
     }
 }

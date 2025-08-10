@@ -143,14 +143,22 @@ pub struct ChunkedFileReader {
 
 impl ChunkedFileReader {
     /// Create a new ChunkedFileReader
-    pub fn new<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
+        let file_size = std::fs::metadata(&path)?.len();
+        let initial_size = optimal_chunk_size(file_size, None);
+
+        let config = ChunkConfig {
+            chunk_size: initial_size,
+            overlap_size: 1024,
+            low_memory_mode: false,
+        };
+
+        let strategy = Strategy::pick_strategy();
         let path = path.as_ref().to_path_buf();
         let mut file = File::open(&path).map_err(TaleError::from)?;
-
         let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
 
         file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
-        let strategy = Strategy::default(); // static strategy
 
         Ok(Self {
             file,
@@ -159,7 +167,29 @@ impl ChunkedFileReader {
             config,
             path,
             pending_data: Vec::new(),
-            strategy, // for the moment
+            strategy,
+            metrics: ChunkMetrics::new(),
+        })
+    }
+
+    pub fn new_with_config<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
+        // Always adaptive unless in constrained environment
+        let strategy = Strategy::pick_strategy();
+
+        let path = path.as_ref().to_path_buf();
+        let mut file = File::open(&path).map_err(TaleError::from)?;
+        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
+
+        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
+
+        Ok(Self {
+            file,
+            file_size,
+            current_position: 0,
+            config,
+            path,
+            pending_data: Vec::new(),
+            strategy,
             metrics: ChunkMetrics::new(),
         })
     }
@@ -176,7 +206,9 @@ impl ChunkedFileReader {
             low_memory_mode: chunk_size <= 8192,
         };
 
-        Ok(Self::new(path, config)?)
+        let mut reader = Self::new(path)?;
+        reader.config = config;
+        Ok(reader)
     }
 
     /// Get the file size
@@ -200,20 +232,30 @@ impl ChunkedFileReader {
             return Ok(None);
         }
 
-        // TODO collect metrics
-        // we need to count passes through here and every N passes
-        // through; collect metrics on current perf
-        if self.strategy.should_adapt(&self.metrics) {
-            let new_size = self.strategy.adapt_size(&self.metrics, self.config.chunk_size);
-            self.config.chunk_size = new_size;
+        // Adapt chunk size if needed
+        match &mut self.strategy {
+            Strategy::Adaptive(adaptive) => {
+                if adaptive.should_adapt(&self.metrics) {
+                    let new_size = adaptive.adapt_size(&self.metrics, self.config.chunk_size);
+                    self.config.chunk_size = new_size;
+                }
+            }
+            Strategy::Static(_) => {
+                // No adaptation
+            }
+            Strategy::Conservative(_strategy) => {
+                // Conservative adaptation - only shrink, never grow
+                if self.metrics.chunks_seen % 10 == 0 {
+                    // Less frequent
+                    let pressure = detect_memory_pressure(None);
+                    if matches!(pressure, MemoryPressure::High | MemoryPressure::Critical) {
+                        self.config.chunk_size = (self.config.chunk_size / 2).max(4096);
+                    }
+                }
+            }
         }
 
-        let chunk_size = std::cmp::min(
-            self.config.chunk_size,
-            (self.file_size - self.current_position) as usize,
-        );
-
-        let mut buffer = vec![0u8; chunk_size];
+        let mut buffer = vec![0u8; self.config.chunk_size];
         let start = std::time::Instant::now();
         let bytes_read = self.file.read(&mut buffer).map_err(TaleError::from)?;
         let read_duration = start.elapsed();
@@ -249,7 +291,7 @@ impl ChunkedFileReader {
 
         // Record metrics
         self.metrics
-            .record_chunk_processing(chunk.size(), read_duration, line_count);
+            .record_chunk_processing(chunk.size(), read_duration, line_count as usize);
         Ok(Some(chunk))
     }
 

@@ -1,7 +1,8 @@
-/// We climbed and we climbed oh how we climbed
-/// My, how we climbed
-/// Over the stars to top Tiger Mountain
-/// Forcing the lines through the snow
+//! We climbed and we climbed oh how we climbed
+//! My, how we climbed
+//! Over the stars to top Tiger Mountain
+//! Forcing the lines through the snow
+
 // use super::AdaptationConfig;
 use super::*;
 use crate::constants::INITIAL_CHUNK_SIZE;
@@ -14,7 +15,18 @@ pub enum Strategy {
     /// Choose a dynamic sizing based on metrics
     Adaptive(AdaptiveStrategy),
     /// Prioritize memory limits over performance
-    Memory(MemoryStrategy),
+    Conservative(MemoryStrategy),
+}
+
+impl Strategy {
+    pub fn pick_strategy() -> Strategy {
+        // Always adaptive unless in constrained environment
+        if is_memory_constrained() {
+            Strategy::Conservative(MemoryStrategy::default())
+        } else {
+            Strategy::Adaptive(AdaptiveStrategy::default())
+        }
+    }
 }
 
 impl Default for Strategy {
@@ -28,7 +40,7 @@ impl From<&str> for Strategy {
         match value.to_lowercase().as_str() {
             "static" => Self::default(),
             "adaptive" => Self::Adaptive(AdaptiveStrategy::default()),
-            "memory" => Self::Memory(MemoryStrategy::default()),
+            "memory" => Self::Conservative(MemoryStrategy::default()),
             _ => Self::default(),
         }
     }
@@ -39,15 +51,15 @@ impl ChunkStrategy for Strategy {
         match self {
             Strategy::Static(v) => v.initial_chunk_size(),
             Strategy::Adaptive(v) => v.initial_chunk_size(),
-            Strategy::Memory(_) => INITIAL_CHUNK_SIZE, // TODO
+            Strategy::Conservative(_) => INITIAL_CHUNK_SIZE, // TODO
         }
     }
 
     fn adapt_size(&mut self, metrics: &super::metrics::ChunkMetrics, current_size: usize) -> usize {
         match self {
-            Strategy::Static(v) => current_size,
+            Strategy::Static(_) => current_size,
             Strategy::Adaptive(v) => v.adapt_size(metrics, current_size),
-            Strategy::Memory(v) => v.adapt_size(metrics, current_size),
+            Strategy::Conservative(v) => v.adapt_size(metrics, current_size),
         }
     }
 
@@ -55,7 +67,7 @@ impl ChunkStrategy for Strategy {
         match self {
             Strategy::Static(_) => false,
             Strategy::Adaptive(v) => v.should_adapt(metrics),
-            Strategy::Memory(v) => v.should_adapt(metrics),
+            Strategy::Conservative(v) => v.should_adapt(metrics),
         }
     }
 }
@@ -63,6 +75,14 @@ impl ChunkStrategy for Strategy {
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
     chunk_size: usize,
+}
+
+impl StaticStrategy {
+    pub fn conservative() -> Self {
+        Self {
+            chunk_size: 4 * 1024, // 4K bytes
+        }
+    }
 }
 
 impl Default for StaticStrategy {

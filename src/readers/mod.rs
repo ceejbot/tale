@@ -105,6 +105,12 @@ pub fn create_file_processor<P: AsRef<Path>>(
     file_size_hint: Option<u64>,
 ) -> Result<FileProcessorType<'static>, TaleError> {
     let path = path.as_ref();
+    let _strategy = if cfg!(debug_assertions) && config::conservative() {
+        Strategy::Static(StaticStrategy::conservative())
+    } else {
+        // Normal smart adaptation
+        Strategy::default()
+    };
 
     // Get file size if not provided
     let file_size = file_size_hint.unwrap_or_else(|| std::fs::metadata(path).map(|m| m.len()).unwrap_or(0));
@@ -419,7 +425,7 @@ mod tests {
             low_memory_mode: true,
         };
 
-        let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
 
         assert_eq!(reader.file_size(), test_data.len() as u64);
         assert_eq!(reader.position(), 0);
@@ -521,7 +527,7 @@ mod tests {
             low_memory_mode: true,
         };
 
-        let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
 
         // Skip first 3 lines
         reader.skip_lines(3)?;
@@ -554,7 +560,7 @@ mod tests {
             low_memory_mode: true,
         };
 
-        let mut reader = ChunkedFileReader::new(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
 
         // Skip exactly 5 lines (should stop mid-chunk)
         reader.skip_lines(5)?;

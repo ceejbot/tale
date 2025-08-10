@@ -16,8 +16,12 @@ pub struct ConfigOpts {
     pub mode: InputMode,
     pub force_chunked: bool,
     pub disable_chunked: bool,
+    pub conservative: bool,
     pub no_file_names: bool,
     pub all_file_names: bool,
+    pub adaptive: bool,
+    pub strategy: Strategy,
+    pub max_memory: usize,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -135,6 +139,7 @@ pub use runtime::{config, set};
 pub use runtime::{update, with_config};
 
 use crate::errors::TaleError;
+use crate::readers::Strategy;
 
 // Public convenience accessors - these work with both implementations
 pub fn tailing() -> bool {
@@ -191,6 +196,13 @@ pub fn disable_chunked() -> bool {
     return config().disable_chunked;
     #[cfg(test)]
     return config().disable_chunked;
+}
+
+pub fn conservative() -> bool {
+    #[cfg(not(test))]
+    return config().conservative;
+    #[cfg(test)]
+    return config().conservative;
 }
 
 pub fn mode() -> InputMode {
@@ -320,15 +332,18 @@ impl ConfigOpts {
             disable_chunked: args.no_chunked,
             no_file_names: args.quiet,
             all_file_names: args.verbose,
+            adaptive: args.adaptive,
+            strategy: args.chunk_strategy.clone(),
+            max_memory: args.max_memory,
+            conservative: args.conservative,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::readers::Strategy;
-
     use super::*;
+    use crate::readers::Strategy;
 
     #[test]
     fn complicated_args() {
@@ -348,6 +363,7 @@ mod tests {
             adaptive: false,
             chunk_strategy: Strategy::default(),
             max_memory: 10_000_000_000,
+            conservative: false,
         };
         let config = ConfigOpts::new(&args);
         assert_eq!(config.offset, -5);

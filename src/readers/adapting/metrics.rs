@@ -1,30 +1,62 @@
-/// Collecting system metrics and maintaining a sliding window.
-/// This will be fun.
+//! Collecting system metrics and maintaining a sliding window.
+//! This will be fun.
+
 use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub struct MetricsCollector {
+    metrics: ChunkMetrics,
+}
+
+impl MetricsCollector {
+    pub fn new() -> Self {
+        Self {
+            metrics: ChunkMetrics::new(),
+        }
+    }
+
+    pub fn record_chunk(&mut self, chunk_bytes: usize, elapsed_ms: Duration, line_count: usize) {
+        self.metrics
+            .record_chunk_processing(chunk_bytes, elapsed_ms, line_count)
+    }
+
+    pub fn ready_to_adapt(&self, interval: usize) -> bool {
+        self.metrics.chunks_seen > 0 && self.metrics.chunks_seen % interval == 0 && self.metrics.lines_moving.count >= 3
+    }
+
+    pub fn snapshot(&self) -> &ChunkMetrics {
+        &self.metrics
+    }
+}
 
 /// We want to track how we're doing so we know when to shift down into second
 /// gear and ride the clutch or when we're winding up into high rpms and need to
 /// upshift.
 #[derive(Debug, Clone)]
 pub struct ChunkMetrics {
-    /// JSON parsing time per chunk; in milliseconds
-    parsed_per_ms: f64,
-    /// how we're tracking parsed per ms
-    parsed_moving: MovingAverage<10>,
+    /// Number of chunks processed
+    pub(crate) chunks_seen: usize,
+    /// JSON parsing time: megabytes per millisecond
+    pub(super) parsed_per_ms: f64,
+    /// how we're tracking megabytes parsed per ms
+    pub(super) parsed_moving: MovingAverage<10>,
     /// memory usage in bytes
-    memory_bytes: usize,
-    memory_moving: MovingAverage<10>,
-    /// my favorite OS stat to look at
-    io_wait_time: usize,
-    iowait_moving: MovingAverage<10>,
+    pub(super) memory_bytes: usize,
+    pub(super) memory_moving: MovingAverage<10>,
+    /// A proxy for my favorite OS stat to look at
+    pub(super) io_wait_time: usize,
+    /// Tracking our iowait proxy over time
+    pub(super) iowait_moving: MovingAverage<10>,
     // The number of lines per chunk we're seeing
-    lines_per_chunk: u64,
-    lines_moving: MovingAverage<10>,
+    pub(super) lines_per_chunk: usize,
+    /// Tracking the lines per chunk
+    pub(super) lines_moving: MovingAverage<10>,
 }
 
 impl ChunkMetrics {
     pub fn new() -> Self {
         Self {
+            chunks_seen: 0,
             parsed_per_ms: 0.0,
             parsed_moving: MovingAverage::new(),
             memory_bytes: 0,
@@ -36,7 +68,8 @@ impl ChunkMetrics {
         }
     }
 
-    pub fn record_chunk_processing(&mut self, chunk_size: usize, duration: Duration, lines: u64) {
+    pub fn record_chunk_processing(&mut self, chunk_size: usize, duration: Duration, lines: usize) {
+        self.chunks_seen += 1;
         self.lines_per_chunk = lines;
         self.lines_moving.push(lines as f64);
 
@@ -68,11 +101,23 @@ impl ChunkMetrics {
         self.parsed_moving.average()
     }
 
-    /// We check if we should adapt every often. This means "check if we should adapt",
-    /// not "we should definitely adapt".
-    pub fn should_adapt(&self, interval: usize, chunks_processed: usize) -> bool {
+    pub fn speed_moving(&self) -> &MovingAverage<10> {
+        &self.parsed_moving
+    }
+
+    pub fn memory_moving(&self) -> &MovingAverage<10> {
+        &self.memory_moving
+    }
+
+    pub fn iowait_moving(&self) -> &MovingAverage<10> {
+        &self.iowait_moving
+    }
+
+    /// We check if we should adapt every often. This means "check if we should
+    /// adapt", not "we should definitely adapt".
+    pub fn should_adapt(&self, interval: usize) -> bool {
         // Adapt every N chunks, but only after we have enough data
-        chunks_processed > 0 && chunks_processed % interval == 0 && self.lines_moving.count >= 3
+        self.chunks_seen > 0 && self.chunks_seen % interval == 0 && self.lines_moving.count >= 3
     }
 }
 
@@ -92,6 +137,7 @@ impl<const N: usize> MovingAverage<N> {
         }
     }
 
+    /// Here's some more frequency, Kenneth.
     pub fn push(&mut self, value: f64) {
         self.values[self.index] = value;
         self.index = (self.index + 1) % N; // wrappity bappity
@@ -114,10 +160,10 @@ impl<const N: usize> MovingAverage<N> {
     }
 
     /// What's the trend, Kenneth?
-    pub fn trend(&mut self) -> Trend {
+    pub fn trend(&self, stable: f64) -> Trend {
         if self.count < 2 {
             // We don't have enough data to know.
-            return Trend::Stable;
+            return Trend::Unknown;
         }
 
         let mid = self.count / 2;
@@ -131,7 +177,7 @@ impl<const N: usize> MovingAverage<N> {
 
         let mut ptr = oldest_idx;
         let mut sum = 0.0;
-        for i in 0..mid {
+        for _i in 0..mid {
             sum += self.values[ptr];
             ptr = (ptr + 1) % N
         }
@@ -139,7 +185,7 @@ impl<const N: usize> MovingAverage<N> {
 
         ptr = (oldest_idx + mid) % N;
         let mut sum = 0.0;
-        for i in 0..mid {
+        for _i in 0..mid {
             sum += self.values[ptr];
             ptr = (ptr + 1) % N;
         }
@@ -155,7 +201,7 @@ impl<const N: usize> MovingAverage<N> {
             0.0
         };
 
-        if percent_diff.abs() < 5.0 {
+        if percent_diff.abs() < stable {
             Trend::Stable
         } else if percent_diff > 0.0 {
             Trend::Improving
@@ -165,16 +211,41 @@ impl<const N: usize> MovingAverage<N> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Trend {
     Improving,
     Stable,
     Degrading,
+    #[default]
+    Unknown,
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_metrics_collector_integration() {
+        let mut collector = MetricsCollector::new();
+
+        // Record some chunks
+        collector.record_chunk(8192, Duration::from_millis(10), 100);
+        collector.record_chunk(8192, Duration::from_millis(12), 95);
+        collector.record_chunk(8192, Duration::from_millis(8), 105);
+
+        // Should not be ready yet (interval is 5)
+        assert!(!collector.ready_to_adapt(5));
+
+        collector.record_chunk(8192, Duration::from_millis(11), 98);
+        collector.record_chunk(8192, Duration::from_millis(9), 102);
+
+        // Now should be ready (5 chunks processed)
+        assert!(collector.ready_to_adapt(5));
+
+        // Check metrics are reasonable
+        let snapshot = collector.snapshot();
+        assert!(snapshot.processing_speed_mbps() > 0.0);
+    }
 
     #[test]
     fn moving_average_can_average() {
@@ -193,7 +264,7 @@ mod test {
     }
 
     #[test]
-    fn can_track_depeche_mode() {
+    fn can_keep_up_with_depeche_mode() {
         let mut avg = MovingAverage::<4>::new();
 
         // Increasing values
@@ -201,7 +272,7 @@ mod test {
         avg.push(2.0);
         avg.push(3.0);
         avg.push(4.0);
-        assert!(matches!(avg.trend(), Trend::Improving));
+        assert!(matches!(avg.trend(0.5), Trend::Improving));
 
         // Stable values
         let mut avg = MovingAverage::<4>::new();
@@ -209,6 +280,25 @@ mod test {
         avg.push(5.1);
         avg.push(4.9);
         avg.push(5.0);
-        assert!(matches!(avg.trend(), Trend::Stable));
+        assert!(matches!(avg.trend(4.0), Trend::Stable));
+    }
+
+    #[test]
+    fn can_pass_thresholds() {
+        // Stable
+        let mut avg = MovingAverage::<4>::new();
+        avg.push(50.0);
+        avg.push(51.0);
+        avg.push(49.0);
+        avg.push(50.0);
+        assert!(matches!(avg.trend(5.0), Trend::Stable));
+
+        // This is degrading now
+        let mut avg = MovingAverage::<4>::new();
+        avg.push(50.0);
+        avg.push(51.0);
+        avg.push(49.0);
+        avg.push(50.0);
+        assert!(matches!(avg.trend(0.5), Trend::Degrading));
     }
 }

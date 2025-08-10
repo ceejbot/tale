@@ -1,14 +1,14 @@
 //! Pretty-print newline-delimited json (ndjson) logs, with a tail-compatible
 //! set of options and behaviors.
 
-mod batch;
-mod config;
-mod errors;
-mod file_state;
-mod logpatterns;
-mod multiplexed;
-mod readers;
-mod watcher;
+pub mod batch;
+pub mod config;
+pub mod errors;
+pub mod file_state;
+pub mod logpatterns;
+pub mod multiplexed;
+pub mod readers;
+pub mod watcher;
 
 use std::io::{self, Write};
 use std::time::Duration;
@@ -25,7 +25,7 @@ use crate::config::InputMode;
 use crate::errors::TaleError;
 use crate::readers::Strategy;
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Default)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]
 /// A tail-compatible tool for pretty-printing ndjson files, especially logs.
 ///
@@ -39,7 +39,7 @@ use crate::readers::Strategy;
 ///
 /// Tale can also follow and display more than one file at a time, with
 /// header decoration options like `tail`'s.
-struct Args {
+pub struct Args {
     /// Follow the file, continuing to watch for more data to arrive.
     #[arg(short, long)]
     follow: bool,
@@ -89,10 +89,14 @@ struct Args {
     /// Choose a specific chunk strategy for testing
     #[arg(short = 's', long)]
     chunk_strategy: Strategy,
-    // Set memory limit
+    /// Set a limit on how much memory can be used in file buffers
     #[arg(short, long)]
     max_memory: usize,
-    /// Arguments: (offset) [file ...] where offset can be +N, -N, or N.
+    #[cfg(debug_assertions)]
+    #[arg(long, hide = true)]
+    conservative: bool,
+
+    /// (offset) [file ...] where offset can be +N, -N, or N.
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
 }
@@ -128,7 +132,8 @@ pub mod constants {
     pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
 
     /// Memory limit for line buffering in negative line offset mode.
-    pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
+    pub const MEMORY_LIMIT_MB: usize = 10 * 1024;
+    pub const MEMORY_LIMIT_BYTES: usize = MEMORY_LIMIT_MB * 1024; // 10MB
 
     /// The initial chunk size to use for adaptive chunked readers.
     pub const INITIAL_CHUNK_SIZE: usize = 32 * 1024; // 32K bytes maybe???
@@ -212,21 +217,9 @@ mod tests {
 
         // Test bytes offset detection - test the config struct directly
         let args = Args {
-            timestamps: false,
-            follow: false,
-            sticky: false,
-            blocks: None,
             bytes: Some(100),
-            offset: None,
-            verbose: false,
-            quiet: false,
-            window: 250,
-            chunked: false,
-            no_chunked: false,
-            adaptive: false,
-            chunk_strategy: Strategy::default(),
-            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
+            ..Default::default()
         };
         let config = ConfigOpts::new(&args);
         assert!(matches!(config.offset_unit, OffsetUnit::Bytes));
@@ -234,21 +227,9 @@ mod tests {
 
         // Test blocks offset detection
         let args = Args {
-            timestamps: false,
-            follow: false,
-            sticky: false,
             blocks: Some(2),
-            bytes: None,
-            offset: None,
-            verbose: false,
-            quiet: false,
-            window: 250,
-            chunked: false,
-            no_chunked: false,
-            adaptive: false,
-            chunk_strategy: Strategy::default(),
-            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
+            ..Default::default()
         };
         let config = ConfigOpts::new(&args);
         assert!(matches!(config.offset_unit, OffsetUnit::Blocks));
@@ -256,21 +237,9 @@ mod tests {
 
         // Test lines offset detection (default)
         let args = Args {
-            timestamps: false,
-            follow: false,
-            sticky: false,
-            blocks: None,
-            bytes: None,
             offset: Some(5),
-            verbose: false,
-            quiet: false,
-            window: 250,
-            chunked: false,
-            no_chunked: false,
-            adaptive: false,
-            chunk_strategy: Strategy::default(),
-            max_memory: 1_000_000_000,
             args: vec!["test.log".to_string()],
+            ..Default::default()
         };
         let config = ConfigOpts::new(&args);
         assert!(matches!(config.offset_unit, OffsetUnit::Lines));
