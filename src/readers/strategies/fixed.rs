@@ -8,32 +8,40 @@ use crate::metrics::ChunkMetrics;
 
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
+    pub chunk_size: usize,
     pub config: ChunkConfig,
 }
 
 impl StaticStrategy {
     pub fn conservative() -> Self {
         let config = ChunkConfig {
-            chunk_size: 4 * 1024,
             overlap_size: 1024,
             low_memory_mode: true,
         };
-        Self { config }
+        Self { 
+            chunk_size: 4 * 1024 * 1024,
+            config 
+        }
     }
 
     pub fn optimal_for_file(file_size: u64) -> Self {
         let config = ChunkConfig::optimal(file_size);
-        Self { config }
+        let chunk_size = optimal_chunk_size(file_size, None);
+        Self { chunk_size, config }
     }
 
     pub fn with_config(config: ChunkConfig) -> Self {
-        Self { config }
+        Self { 
+            chunk_size: READ_BUFFER_SIZE, // Default chunk size
+            config 
+        }
     }
 }
 
 impl Default for StaticStrategy {
     fn default() -> Self {
         Self {
+            chunk_size: READ_BUFFER_SIZE,
             config: ChunkConfig::default(),
         }
     }
@@ -42,7 +50,7 @@ impl Default for StaticStrategy {
 impl IsStrategy for StaticStrategy {
     /// the fixed chunk size we should use
     fn initial_chunk_size(&self) -> usize {
-        self.config.chunk_size
+        self.chunk_size
     }
 
     /// Don't change.
@@ -55,11 +63,9 @@ impl IsStrategy for StaticStrategy {
     }
 }
 
-/// Configuration for FileChunk processing
+/// Configuration for FileChunk processing (chunk_size moved to Strategy)
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
-    /// Size of each chunk in bytes
-    pub chunk_size: usize,
     /// Maximum overlap between chunks to handle line boundaries
     pub overlap_size: usize,
     /// Whether to use memory-constrained processing
@@ -69,7 +75,6 @@ pub struct ChunkConfig {
 impl Default for ChunkConfig {
     fn default() -> Self {
         Self {
-            chunk_size: READ_BUFFER_SIZE,
             overlap_size: 1024, // 1KB overlap for line boundaries
             low_memory_mode: false,
         }
@@ -77,18 +82,11 @@ impl Default for ChunkConfig {
 }
 
 impl ChunkConfig {
-    pub fn optimal(file_size: u64) -> Self {
-        let chunk_size = optimal_chunk_size(file_size, None);
-
+    pub fn optimal(_file_size: u64) -> Self {
         Self {
-            chunk_size,
             overlap_size: 1024,
             low_memory_mode: false,
         }
-    }
-
-    pub fn current(&self) -> usize {
-        self.chunk_size
     }
 }
 

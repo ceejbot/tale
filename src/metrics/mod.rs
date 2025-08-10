@@ -13,9 +13,9 @@ pub use metrics::*;
 pub fn is_memory_constrained() -> bool {
     // Check if we're in a container, low memory system, etc.
     // The check can get more complex than this
-    let avail_mb = memory::available_memory_mb();
-    eprintln!("memory::available_memory_mb() => {avail_mb}");
+    let avail_bytes = memory::available_memory_bytes();
+    eprintln!("memory::available_memory_bytes() => {avail_bytes}");
     eprintln!("pressure is: {:#?}", detect_memory_pressure(None));
 
-    memory::available_memory_mb() < 500
+    memory::available_memory_bytes() < 500
 }

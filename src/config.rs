@@ -335,7 +335,10 @@ impl ConfigOpts {
             adaptive: args.adaptive,
             strategy: args.chunk_strategy.clone(),
             max_memory: args.max_memory,
+            #[cfg(debug_assertions)]
             conservative: args.conservative,
+            #[cfg(not(debug_assertions))]
+            conservative: false,
         }
     }
 }

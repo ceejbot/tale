@@ -1,7 +1,23 @@
-//! We climbed and we climbed oh how we climbed
-//! My, how we climbed
-//! Over the stars to top Tiger Mountain
-//! Forcing the lines through the snow
+//! Strategy pattern for chunk size management in ChunkedFileReader.
+//!
+//! This module implements different strategies for determining optimal chunk sizes:
+//!
+//! ## Strategy Types
+//! - **StaticStrategy**: Fixed chunk size optimized for file size
+//! - **AdaptiveStrategy**: Dynamic adaptation based on performance metrics
+//! - **ConservativeStrategy**: Memory-constrained optimization
+//!
+//! ## Key Design Decisions
+//! - Strategy owns chunk_size (single source of truth)
+//! - ChunkConfig only holds immutable bounds (overlap_size, low_memory_mode)
+//! - Strategies implement IsStrategy trait for consistent interface
+//!
+//! ## Usage
+//! ```
+//! let strategy = Strategy::from_config(&config, Some(file_size));
+//! let chunk_size = strategy.initial_chunk_size();
+//! let new_size = strategy.adapt_size(&metrics, current_size);
+//! ```
 
 mod adaptive;
 mod conservative;
@@ -45,17 +61,8 @@ impl Strategy {
         }
     }
 
-    /// Pick the best strategy based on context
-    pub fn auto_select() -> Self {
-        if is_memory_constrained() {
-            Strategy::Conservative(ConservativeStrategy::default())
-        } else {
-            Strategy::Adaptive(AdaptiveStrategy::default())
-        }
-    }
-
     /// Create from CLI options
-    pub fn from_config(config: &ConfigOpts) -> Self {
+    pub fn from_config(config: &ConfigOpts, size_hint: Option<u64>) -> Self {
         // Explicit strategy from CLI
         if let Some(strategy) = &config.strategy {
             return strategy.clone();
@@ -68,11 +75,24 @@ impl Strategy {
 
         // Adaptive is off
         if !config.adaptive {
-            return Strategy::Static(StaticStrategy::default());
+            let strat = if let Some(size) = size_hint {
+                StaticStrategy::optimal_for_file(size)
+            } else {
+                StaticStrategy::default()
+            };
+            return Strategy::Static(strat);
         }
 
-        // Auto-select based on environment
-        Self::auto_select()
+        if is_memory_constrained() {
+            Strategy::Conservative(ConservativeStrategy::default())
+        } else {
+            let strat = if let Some(size) = size_hint {
+                AdaptiveStrategy::optimal_for_file(size)
+            } else {
+                AdaptiveStrategy::default()
+            };
+            Strategy::Adaptive(strat)
+        }
     }
 }
 
@@ -125,16 +145,15 @@ mod tests {
 
     #[test]
     fn test_strategy_selection() {
-        // Test with adaptive enabled
+        // Test with explicit strategy (bypassing memory detection)
         let config = ConfigOpts {
             adaptive: true,
-            strategy: None,
+            strategy: Some(Strategy::Adaptive(AdaptiveStrategy::default())),
             conservative: false,
             ..Default::default()
         };
 
-        let strategy = Strategy::from_config(&config);
-        eprintln!("{strategy:#?}");
+        let strategy = Strategy::from_config(&config, None);
         assert!(matches!(strategy, Strategy::Adaptive(_)));
     }
 }

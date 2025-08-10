@@ -12,7 +12,9 @@ pub struct ConservativeStrategy {
 
 impl IsStrategy for ConservativeStrategy {
     fn initial_chunk_size(&self) -> usize {
-        todo!()
+        let per_chunk = self.config.calculate_limit_bytes() / self.config.num_files;
+        // self.config.chunk_size = per_chunk;
+        per_chunk
     }
 
     /// Given the current chunk size and current metrics, make a decision about
@@ -31,38 +33,37 @@ impl IsStrategy for ConservativeStrategy {
 
     /// Should we do the work of making an adaptation decision right now or just
     /// keep sailing?
-    fn should_adapt(&self, _metrics: &ChunkMetrics) -> bool {
-        // metrics.should_adapt(interval, chunks_processed)
-        todo!()
+    fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
+        metrics.should_adapt(self.config.interval)
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ConservativeConfig {
     // User-specified limit
-    pub max_total_mb: Option<usize>,
+    pub max_total_bytes: Option<usize>,
     // Count of files being processed
     pub num_files: usize,
+    pub interval: usize, // Check every N chunks
 }
 
 impl ConservativeConfig {
-    const MEMORY_CEILING_MB: usize = 200;
-    const PER_FILE_MB: usize = 10;
+    const MEMORY_CEILING_BYTES: usize = 200 * 1024 * 1024;
+    const PER_FILE_BYTES: usize = 10 * 1024 * 1024;
 
     /// Responds with a limit in megabytes.
-    pub fn calculate_limit_mb(&self) -> usize {
-        if let Some(user_limit) = self.max_total_mb {
+    pub fn calculate_limit_bytes(&self) -> usize {
+        if let Some(user_limit) = self.max_total_bytes {
             return user_limit;
         }
 
-        // If we have the space, we give each file a fairly
-        // roomy 10MB. This is probably more than we need, and we
-        // can tighten after measuring.
-        let total_for_files = ConservativeConfig::PER_FILE_MB * self.num_files;
+        // If we have the space, we give each file a fairly roomy 10MB. This is
+        // probably more than we need, and we can tighten after measuring.
+        let total_for_files = ConservativeConfig::PER_FILE_BYTES * self.num_files;
 
         // System limit: 10% of RAM or 200MB, whichever is smaller
-        let total_ram_mb = crate::metrics::get_system_ram_mb();
-        let system_limit = std::cmp::min(total_ram_mb / 10, ConservativeConfig::MEMORY_CEILING_MB);
+        let system_total = crate::metrics::get_system_ram_bytes();
+        let system_limit = std::cmp::min(system_total / 10, ConservativeConfig::MEMORY_CEILING_BYTES);
 
         std::cmp::min(total_for_files, system_limit)
     }

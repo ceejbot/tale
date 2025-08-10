@@ -1,10 +1,22 @@
-//! Chunked file processing for memory-efficient handling of large files.
+//! Memory-efficient chunked file processing with strategy-based adaptation.
 //!
-//! This exists so we can:
-//! - cope with large files with constant memory usage
-//! - handle large offsets better than before
-//! - do parallel processing in the future
-//! - operate in memory-constrained situations
+//! `ChunkedFileReader` processes large files in manageable chunks while maintaining:
+//! - **Bounded memory usage**: Memory footprint independent of file size
+//! - **Line boundary handling**: Proper JSON line parsing across chunks
+//! - **Adaptive performance**: Strategy pattern for chunk size optimization
+//! - **Metrics collection**: Performance tracking for adaptation decisions
+//!
+//! ## Architecture
+//! - Strategy owns chunk_size (StaticStrategy, AdaptiveStrategy, ConservativeStrategy)
+//! - ChunkConfig holds immutable settings (overlap_size, low_memory_mode)
+//! - FileChunk manages data boundaries and line parsing
+//! - ChunkMetrics tracks performance for adaptive strategies
+//!
+//! ## Usage
+//! ```
+//! let mut reader = ChunkedFileReader::new(&path)?;
+//! reader.process_lines(|line| { /* process line */ Ok(()) })?;
+//! ```
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -96,8 +108,6 @@ pub struct ChunkedFileReader {
     _path: PathBuf,
     /// Data from previous chunk that didn't end at line boundary
     pending_data: Vec<u8>,
-    /// config
-    config: ChunkConfig,
     /// What's the strategy, Kenneth?
     strategy: Strategy,
     /// Tracking how we're doing
@@ -108,10 +118,9 @@ impl ChunkedFileReader {
     /// Create a new ChunkedFileReader
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
         let file_size = std::fs::metadata(&path)?.len();
-        let config = ChunkConfig::optimal(file_size);
 
         // Get strategy from global config
-        let strategy = Strategy::from_config(&crate::config::config());
+        let strategy = Strategy::from_config(&crate::config::config(), Some(file_size));
 
         let path = path.as_ref().to_path_buf();
         let mut file = File::open(&path)?;
@@ -123,7 +132,6 @@ impl ChunkedFileReader {
             file_size,
             current_position: 0,
             _path: path,
-            config,
             pending_data: Vec::new(),
             strategy,
             metrics: ChunkMetrics::new(),
@@ -163,7 +171,6 @@ impl ChunkedFileReader {
             file_size,
             current_position: 0,
             _path,
-            config,
             pending_data: Vec::new(),
             strategy: Strategy::Static(strategy),
             metrics: ChunkMetrics::new(),
@@ -199,17 +206,17 @@ impl ChunkedFileReader {
             return Ok(None);
         }
 
-        // Adapt chunk size based on strategy
-        if self.strategy.should_adapt(&self.metrics) {
-            let new_size = self.strategy.adapt_size(&self.metrics, self.config.chunk_size);
-            if new_size != self.config.chunk_size {
-                // #[cfg(debug_assertions)]
-                // eprintln!("Chunk size: {} -> {}", self.config.chunk_size, new_size);
-                self.config.chunk_size = new_size;
+        // Let strategy adapt if needed (every 20 chunks)
+        if self.metrics.chunks_seen % 20 == 0 {
+            if self.strategy.should_adapt(&self.metrics) {
+                let current_size = self.strategy.initial_chunk_size();
+                self.strategy.adapt_size(&self.metrics, current_size);
             }
         }
 
-        let mut buffer = vec![0u8; self.config.chunk_size];
+        // Always get chunk size from strategy (single source of truth)
+        let chunk_size = self.strategy.initial_chunk_size();
+        let mut buffer = vec![0u8; chunk_size];
         let start = std::time::Instant::now();
         let bytes_read = self.file.read(&mut buffer).map_err(TaleError::from)?;
         let read_duration = start.elapsed();

@@ -1,7 +1,29 @@
-//! Input processors and traits related thereto.
-//! I'm just getting a little fussy and neurotic about not having a million
-//! files in a flat hierarchy, which is likely my problem and not anything
-//! wrong with lots of files in a src directory, you know? Anyway.
+//! File processing architecture with different strategies for various use cases.
+//!
+//! This module provides a clean hierarchy of file processors:
+//!
+//! ## Processors
+//! - **BufferedFileProcessor**: Simple forward-only reading for small files
+//! - **ChunkedFileReader**: Memory-efficient processing with Strategy-based adaptation
+//! - **BackSeekingProcessor**: Handles backward seeking and tail-like functionality
+//!
+//! ## Strategy Pattern
+//! ChunkedFileReader uses the Strategy pattern for chunk size management:
+//! - **StaticStrategy**: Fixed optimal chunk size (fastest, predictable memory)
+//! - **AdaptiveStrategy**: Dynamic sizing based on performance metrics
+//! - **ConservativeStrategy**: Memory-constrained environments
+//!
+//! ## Processor Selection
+//! `create_file_processor()` automatically selects the best processor based on:
+//! - File size and offset requirements
+//! - Memory constraints (--chunked, --no-chunked flags)
+//! - Operation type (negative offsets → BackSeekingProcessor)
+//!
+//! ## Architecture Benefits
+//! - **Single source of truth**: Strategy owns chunk_size (not ChunkConfig)
+//! - **Memory efficiency**: Bounded memory usage regardless of file size
+//! - **Performance**: Adaptive strategies optimize for throughput vs memory
+//! - **Extensibility**: Easy to add new strategies or processors
 
 mod backseeking;
 mod buffered;
@@ -430,12 +452,15 @@ mod tests {
         let temp_file = create_test_file(test_data);
 
         let config = ChunkConfig {
-            chunk_size: 8, // Small chunks to test boundary handling
             overlap_size: 2,
             low_memory_mode: true,
         };
+        let strategy = StaticStrategy {
+            chunk_size: 8, // Small chunks to test boundary handling
+            config: config.clone(),
+        };
 
-        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
 
         assert_eq!(reader.file_size(), test_data.len() as u64);
         assert_eq!(reader.position(), 0);
@@ -532,12 +557,15 @@ mod tests {
 
         // Use small chunk size to test boundary handling
         let config = ChunkConfig {
-            chunk_size: 15, // Small enough to split across chunks
             overlap_size: 2,
             low_memory_mode: true,
         };
+        let strategy = StaticStrategy {
+            chunk_size: 15, // Small enough to split across chunks
+            config: config.clone(),
+        };
 
-        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
 
         // Skip first 3 lines
         reader.skip_lines(3)?;
@@ -565,12 +593,15 @@ mod tests {
         let temp_file = create_test_file(test_data);
 
         let config = ChunkConfig {
-            chunk_size: 8, // Will create multiple small chunks
             overlap_size: 1,
             low_memory_mode: true,
         };
+        let strategy = StaticStrategy {
+            chunk_size: 8, // Will create multiple small chunks
+            config: config.clone(),
+        };
 
-        let mut reader = ChunkedFileReader::new_with_config(temp_file.path(), config)?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
 
         // Skip exactly 5 lines (should stop mid-chunk)
         reader.skip_lines(5)?;

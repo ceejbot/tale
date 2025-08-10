@@ -6,7 +6,7 @@
 
 pub use memimpl::*;
 
-use crate::constants::MEMORY_LIMIT_MB;
+use crate::constants::MEMORY_LIMIT_BYTES;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryPressure {
@@ -18,8 +18,8 @@ pub enum MemoryPressure {
     Critical, // > 95%
 }
 
-pub fn detect_memory_pressure(limit_mb: Option<usize>) -> MemoryPressure {
-    memimpl::detect_memory_pressure(limit_mb)
+pub fn detect_memory_pressure(limit_bytes: Option<usize>) -> MemoryPressure {
+    memimpl::detect_memory_pressure(limit_bytes)
 }
 
 impl From<f64> for MemoryPressure {
@@ -74,7 +74,7 @@ pub mod memimpl {
     }
 
     /// Are we under memory pressure?
-    pub fn detect_memory_pressure(max_allowed_mb: Option<usize>) -> MemoryPressure {
+    pub fn detect_memory_pressure(max_allowed_bytes: Option<usize>) -> MemoryPressure {
         // Return appropriate level
         let Some(pid) = pid() else {
             return MemoryPressure::Unknown;
@@ -87,8 +87,7 @@ pub mod memimpl {
             return MemoryPressure::Unknown;
         };
         let rss = process.memory() as usize;
-        let max_allowed =
-            max_allowed_mb.unwrap_or_else(|| config().max_memory.unwrap_or(MEMORY_LIMIT_MB)) * 1024 * 1024;
+        let max_allowed = max_allowed_bytes.unwrap_or_else(|| config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
         let free = system.free_memory() as usize;
         // let total = system.total_memory();
         // eprintln!("memory: rss={rss}; max_allowed={max_allowed}; free={free};");
@@ -103,12 +102,12 @@ pub mod memimpl {
         }
     }
 
-    pub fn get_system_ram_mb() -> usize {
+    pub fn get_system_ram_bytes() -> usize {
         let system = system();
         system.total_memory() as usize
     }
 
-    pub fn available_memory_mb() -> usize {
+    pub fn available_memory_bytes() -> usize {
         let Some(pid) = pid() else {
             return 0;
         };
@@ -120,19 +119,19 @@ pub mod memimpl {
         let total = system.total_memory() as usize;
 
         let Some(process) = system.process(pid) else {
-            return (free / 1024) as usize;
+            return free as usize;
         };
         let rss = process.memory() as usize;
-        let max_allowed = config().max_memory.unwrap_or(MEMORY_LIMIT_MB);
+        let max_allowed = config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);
 
-        eprintln!("system: total={total} free={free}; process: rss={rss}; max mb: {max_allowed}");
+        eprintln!("system: total={total} free={free}; process: rss={rss}; max: {max_allowed}");
 
-        let remaining_budget = (max_allowed * 1024).saturating_sub(rss);
+        let remaining_budget = max_allowed.saturating_sub(rss);
         let available = std::cmp::min(free, remaining_budget);
-        available / 1024
+        available
     }
 
-    pub fn process_memory_mb() -> usize {
+    pub fn process_memory_bytes() -> usize {
         let Some(pid) = pid() else {
             return 0;
         };

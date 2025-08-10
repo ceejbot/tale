@@ -296,3 +296,31 @@ The application is highly optimized and fully functional with:
 - All 10 reader tests passing
 
 **Status**: FileChunk core functionality complete, ready for Phase 2 enhancements
+
+### 2025-01-10: Phase 1 Architecture Cleanup
+
+**Strategy Pattern Consolidation**: Unified chunk size management
+- **Single source of truth**: Strategy now owns chunk_size (not ChunkConfig)
+  - StaticStrategy.chunk_size field added
+  - ChunkConfig.chunk_size field removed
+  - ChunkedFileReader always gets chunk_size from strategy.initial_chunk_size()
+  - Eliminated dual configuration confusion
+- **Code cleanup**: Removed unused AdaptiveChunkReader<T> and AdaptationController<T>
+  - These were never used in production code
+  - Strategy enum provides all needed functionality
+  - Reduced complexity and warning messages
+- **Documentation improvements**: Clarified reader hierarchy
+  - BufferedFileProcessor: Simple forward-only reading for small files
+  - ChunkedFileReader: Memory-efficient processing with Strategy adaptation  
+  - BackSeekingProcessor: Handles backward seeking and tail functionality
+  - Clear processor selection logic in create_file_processor()
+
+**Architecture Benefits Achieved**:
+- Clear separation of concerns: Strategy handles sizing, ChunkConfig handles boundaries
+- Reduced memory footprint: Removed unused generic wrapper types
+- Better testability: Strategy can be independently tested and configured
+- Maintainability: Single code path for chunk size decisions
+
+**Tests Updated**: Fixed test cases to work with new Strategy-owned chunk_size pattern
+
+**Status**: Phase 1 complete - clean architecture with Strategy as single source of truth

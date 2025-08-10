@@ -4,69 +4,36 @@
 //! the memory-stuffed real-hardware luxury box. We also want to cope with
 //! what we're being asked to juggle.
 
+use std::time::{Duration, Instant};
+
 use super::*;
 use crate::constants::INITIAL_CHUNK_SIZE;
 use crate::metrics::*;
-use crate::readers::ChunkedFileReader;
 
-/// Here's the reader type that can adapt.
-#[derive(Debug)]
-pub struct AdaptiveChunkReader<T>
-where
-    T: IsStrategy,
-{
-    reader: ChunkedFileReader,
-    controller: AdaptationController<T>,
-}
+// AdaptiveChunkReader and AdaptationController removed - functionality moved to Strategy enum
 
 #[derive(Debug, Clone)]
-pub struct AdaptationController<T>
-where
-    T: IsStrategy,
-{
-    strategy: T,
-    collector: MetricsCollector,
-    config: AdaptationConfig,
-    adaptations_made: usize,
+struct MemoryCache {
+    last_check: Instant,
+    last_pressure: MemoryPressure,
 }
 
-impl<T> AdaptationController<T>
-where
-    T: IsStrategy,
-{
-    pub fn should_adapt(&self) -> bool {
-        self.collector.ready_to_adapt(self.config.interval)
-    }
-
-    pub fn calculate_new_size(&mut self, current: usize) -> usize {
-        self.adaptations_made += 1;
-        let metrics = self.collector.snapshot();
-        self.strategy.adapt_size(metrics, current)
-    }
-
-    /// For debug output.
-    pub fn adaptation_stats(&self) -> AdaptationStats {
-        AdaptationStats {
-            chunks_processed: self.collector.chunks_seen(),
-            avg_chunk_size: self.collector.chunk_sizes_avg(),
-            avg_speed_mbps: self.collector.processing_speed_mbps(),
-            adaptations_made: self.adaptations_made,
+impl MemoryCache {
+    fn get_pressure(&mut self) -> MemoryPressure {
+        // Only check every 1 second
+        if self.last_check.elapsed() > Duration::from_secs(1) {
+            self.last_pressure = detect_memory_pressure(None);
+            self.last_check = Instant::now();
         }
+        self.last_pressure
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct AdaptationStats {
-    chunks_processed: usize,
-    avg_chunk_size: f64,
-    avg_speed_mbps: f64,
-    adaptations_made: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct AdaptiveStrategy {
-    config: AdaptationConfig,
+    pub config: AdaptationConfig,
     metrics_history: MovingAverage<10>,
+    memory: MemoryCache,
 }
 
 impl Default for AdaptiveStrategy {
@@ -75,11 +42,25 @@ impl Default for AdaptiveStrategy {
         Self {
             config,
             metrics_history: MovingAverage::new(),
+            memory: MemoryCache {
+                last_check: Instant::now(),
+                last_pressure: MemoryPressure::Unknown,
+            },
         }
     }
 }
 
-impl AdaptiveStrategy {}
+impl AdaptiveStrategy {
+    pub fn optimal_for_file(file_size: u64) -> Self {
+        let mut config = AdaptationConfig::default();
+        // Start at the same size static would use
+        config.initial_chunk_size = optimal_chunk_size(file_size, None);
+        Self {
+            config,
+            ..Default::default()
+        }
+    }
+}
 
 // We adapt based on performance and memory data as we go
 impl IsStrategy for AdaptiveStrategy {
@@ -87,8 +68,9 @@ impl IsStrategy for AdaptiveStrategy {
         self.config.initial_chunk_size
     }
 
-    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
-        let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
+    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size_bytes: usize) -> usize {
+        let pressure = self.memory.get_pressure();
+        // let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
 
         /*
         #[cfg(debug_assertions)]
@@ -110,20 +92,20 @@ impl IsStrategy for AdaptiveStrategy {
 
         // High pressure - gradual reduction
         if matches!(pressure, MemoryPressure::High) {
-            return (current_size as f64 * 0.5) as usize; // Aggressive shrink
+            return (current_size_bytes as f64 * 0.5) as usize; // Aggressive shrink
         }
 
         let newsize = match pressure {
             MemoryPressure::Critical => self.config.min_chunk_size,
-            MemoryPressure::High => (current_size as f64 * self.config.shrink_factor) as usize,
+            MemoryPressure::High => (current_size_bytes as f64 * self.config.shrink_factor) as usize,
             _ => {
                 let moving_ave = metrics.speed_moving();
                 let perf = moving_ave.trend(self.config.speed_increase_threshold);
                 match perf {
-                    Trend::Improving => (current_size as f64 * self.config.growth_factor) as usize,
-                    Trend::Degrading => (current_size as f64 * self.config.shrink_factor) as usize,
-                    Trend::Stable => current_size,
-                    Trend::Unknown => current_size,
+                    Trend::Improving => (current_size_bytes as f64 * self.config.growth_factor) as usize,
+                    Trend::Degrading => (current_size_bytes as f64 * self.config.shrink_factor) as usize,
+                    Trend::Stable => current_size_bytes,
+                    Trend::Unknown => current_size_bytes,
                 }
             }
         };
@@ -173,15 +155,15 @@ impl AdaptationConfig {
 impl Default for AdaptationConfig {
     fn default() -> Self {
         Self {
-            min_chunk_size: 4 * 1024,
-            max_chunk_size: 1024 * 1024,
+            min_chunk_size: 8 * 1024,        // 8K
+            max_chunk_size: 5 * 1024 * 1024, // Increase to 5MB
             initial_chunk_size: INITIAL_CHUNK_SIZE,
-            speed_increase_threshold: 5.0,   // 5% improvement to grow
-            _speed_decrease_threshold: -5.0, // 5% degradation to shrink
-            memory_threshold_mb: 200,        // 200MB default limit
-            growth_factor: 1.5,
-            shrink_factor: 0.67,
-            interval: 10,
+            speed_increase_threshold: 3.0,  // Lower threshold
+            _speed_decrease_threshold: 0.0, // Less frequent adaptation
+            memory_threshold_mb: 200,
+            growth_factor: 2.0, // More aggressive growth
+            shrink_factor: 0.5, // More aggressive shrink
+            interval: 20,
         }
     }
 }
