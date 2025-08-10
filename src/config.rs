@@ -370,6 +370,8 @@ mod tests {
             chunk_strategy: None,
             max_memory: Some(10_000_000_000),
             conservative: false,
+            #[cfg(debug_assertions)]
+            profile_json: false,
         };
         let config = ConfigOpts::new(&args);
         assert_eq!(config.offset, -5);

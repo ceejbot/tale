@@ -31,6 +31,11 @@ pub enum TaleError {
     #[diagnostic()]
     Io(#[from] Box<IoError>),
 
+    /// Memory management errors
+    #[error("Memory management error: {0}")]
+    #[diagnostic(code(tale::memory::error))]
+    MemoryError(String),
+
     /// Globular errors.
     #[error(transparent)]
     #[diagnostic()]

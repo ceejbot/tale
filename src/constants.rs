@@ -1,7 +1,7 @@
 //! Named constants, rather than magic ones. All times & durations should
 //! be in milliseconds. All sizes should be in bytes.
 
-use super::Duration;
+use std::time::Duration;
 
 /// How long we wait before flushing data to stdout when tailing.
 pub const TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);

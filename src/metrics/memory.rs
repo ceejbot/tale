@@ -87,7 +87,7 @@ pub mod memimpl {
             return MemoryPressure::Unknown;
         };
         let rss = process.memory() as usize;
-        let max_allowed = max_allowed_bytes.unwrap_or_else(|| config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
+        let max_allowed = max_allowed_bytes.unwrap_or_else(|| crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
         let free = system.free_memory() as usize;
         // let total = system.total_memory();
         // eprintln!("memory: rss={rss}; max_allowed={max_allowed}; free={free};");
@@ -122,7 +122,7 @@ pub mod memimpl {
             return free as usize;
         };
         let rss = process.memory() as usize;
-        let max_allowed = config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);
+        let max_allowed = crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);
 
         eprintln!("system: total={total} free={free}; process: rss={rss}; max: {max_allowed}");
 

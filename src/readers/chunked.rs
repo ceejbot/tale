@@ -27,6 +27,7 @@ use miette::{ErrReport, Result};
 use super::FileProcessor;
 use super::strategies::Strategy;
 use crate::errors::TaleError;
+use crate::memory_budget::{MemoryBudget, MemoryAllocation, MemoryPressure};
 use crate::metrics::*;
 use crate::readers::strategies::ChunkConfig;
 use crate::readers::{IsStrategy, StaticStrategy};
@@ -105,13 +106,19 @@ pub struct ChunkedFileReader {
     /// Our current position in the file we're reading.
     current_position: u64,
     /// The path of the file we're reading from
-    _path: PathBuf,
+    path: PathBuf,
     /// Data from previous chunk that didn't end at line boundary
     pending_data: Vec<u8>,
     /// What's the strategy, Kenneth?
     strategy: Strategy,
     /// Tracking how we're doing
     metrics: ChunkMetrics,
+    /// Memory budget management
+    memory_budget: Option<MemoryBudget>,
+    /// Current chunk allocation
+    current_allocation: Option<MemoryAllocation>,
+    /// Reader ID for memory tracking
+    reader_id: String,
 }
 
 impl ChunkedFileReader {
@@ -123,18 +130,33 @@ impl ChunkedFileReader {
         let strategy = Strategy::from_config(&crate::config::config(), Some(file_size));
 
         let path = path.as_ref().to_path_buf();
+        let reader_id = format!("chunked_reader_{}", path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown"));
+        
         let mut file = File::open(&path)?;
         file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
+
+        // Try to create memory budget from config max_memory
+        let memory_budget = if let Some(max_memory) = crate::config::config().max_memory {
+            Some(MemoryBudget::new(max_memory)?)
+        } else {
+            // Default: use 10% of system memory
+            MemoryBudget::from_system_memory(10.0).ok()
+        };
 
         Ok(Self {
             file,
             file_size,
             current_position: 0,
-            _path: path,
+            path,
             pending_data: Vec::new(),
             strategy,
             metrics: ChunkMetrics::new(),
+            memory_budget,
+            current_allocation: None,
+            reader_id,
         })
     }
 
@@ -145,36 +167,27 @@ impl ChunkedFileReader {
         Ok(reader)
     }
 
+    /// Create with explicit memory budget
+    pub fn with_memory_budget<P: AsRef<Path>>(path: P, memory_budget: MemoryBudget) -> Result<Self, TaleError> {
+        let mut reader = Self::new(path)?;
+        reader.memory_budget = Some(memory_budget);
+        Ok(reader)
+    }
+
     /// Pick the optimal chunk size and stick with it
     pub fn static_optimal<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
-        let _path = path.as_ref().to_path_buf();
-        let mut file = File::open(&path).map_err(TaleError::from)?;
-        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
-        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
-
+        let mut reader = Self::new(&path)?;
+        let file_size = reader.file_size;
         let strategy = StaticStrategy::optimal_for_file(file_size);
-        let mut reader = Self::new(path)?;
         reader.strategy = Strategy::Static(strategy);
         Ok(reader)
     }
 
     pub fn new_with_config<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
-        let strategy = StaticStrategy::with_config(config.clone());
-        let _path = path.as_ref().to_path_buf();
-        let mut file = File::open(&path).map_err(TaleError::from)?;
-        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
-
-        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
-
-        Ok(Self {
-            file,
-            file_size,
-            current_position: 0,
-            _path,
-            pending_data: Vec::new(),
-            strategy: Strategy::Static(strategy),
-            metrics: ChunkMetrics::new(),
-        })
+        let mut reader = Self::new(&path)?;
+        let strategy = StaticStrategy::with_config(config);
+        reader.strategy = Strategy::Static(strategy);
+        Ok(reader)
     }
 
     /// Create a ChunkedFileReader with optimal configuration for the file
@@ -202,9 +215,6 @@ impl ChunkedFileReader {
         if self.is_at_end() {
             return Ok(None);
         }
-        if self.is_at_end() {
-            return Ok(None);
-        }
 
         // Let strategy adapt if needed (every 20 chunks)
         if self.metrics.chunks_seen % 20 == 0 {
@@ -214,8 +224,63 @@ impl ChunkedFileReader {
             }
         }
 
-        // Always get chunk size from strategy (single source of truth)
-        let chunk_size = self.strategy.initial_chunk_size();
+        // Get base chunk size from strategy
+        let mut chunk_size = self.strategy.initial_chunk_size();
+
+        // Apply memory budget adjustments if available
+        if let Some(ref budget) = self.memory_budget {
+            // Check memory pressure and adjust chunk size
+            if let Ok(pressure) = budget.current_pressure() {
+                let factor = pressure.chunk_size_factor();
+                chunk_size = (chunk_size as f64 * factor) as usize;
+                
+                // Don't let it get too small
+                chunk_size = chunk_size.max(4096); // Minimum 4KB
+                
+                // Log critical memory pressure
+                if matches!(pressure, MemoryPressure::Critical) {
+                    eprintln!("⚠️  Critical memory pressure - reducing chunk size to {} bytes", chunk_size);
+                }
+            }
+            
+            // Try to allocate memory for this chunk
+            let total_allocation_needed = chunk_size + self.pending_data.len();
+            
+            // Release previous allocation first
+            self.current_allocation = None;
+            
+            // Try to allocate new chunk
+            match budget.try_allocate(total_allocation_needed, &self.reader_id) {
+                Ok(Some(allocation)) => {
+                    self.current_allocation = Some(allocation);
+                }
+                Ok(None) => {
+                    // Allocation failed - try with smaller chunk size
+                    let emergency_size = chunk_size / 4; // Emergency 25% size
+                    if emergency_size >= 1024 { // Don't go below 1KB
+                        chunk_size = emergency_size;
+                        let emergency_allocation = budget.try_allocate(
+                            emergency_size + self.pending_data.len(), 
+                            &self.reader_id
+                        )?;
+                        if let Some(allocation) = emergency_allocation {
+                            self.current_allocation = Some(allocation);
+                            eprintln!("🆘 Emergency memory allocation - using {} byte chunks", chunk_size);
+                        } else {
+                            return Err(TaleError::MemoryError(
+                                "Cannot allocate memory even for emergency chunk size".to_string()
+                            ).into());
+                        }
+                    } else {
+                        return Err(TaleError::MemoryError(
+                            "Out of memory - chunk size would be too small".to_string()
+                        ).into());
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
         let mut buffer = vec![0u8; chunk_size];
         let start = std::time::Instant::now();
         let bytes_read = self.file.read(&mut buffer).map_err(TaleError::from)?;
@@ -270,6 +335,21 @@ impl ChunkedFileReader {
     pub fn reset(&mut self) -> Result<(), TaleError> {
         self.seek(SeekFrom::Start(0))?;
         Ok(())
+    }
+
+    /// Get current memory pressure level
+    pub fn memory_pressure(&self) -> Option<Result<MemoryPressure, TaleError>> {
+        self.memory_budget.as_ref().map(|budget| budget.current_pressure())
+    }
+
+    /// Get memory budget statistics
+    pub fn memory_stats(&self) -> Option<Result<crate::memory_budget::MemoryBudgetStats, TaleError>> {
+        self.memory_budget.as_ref().map(|budget| budget.usage_stats())
+    }
+
+    /// Check if memory budget is active
+    pub fn has_memory_budget(&self) -> bool {
+        self.memory_budget.is_some()
     }
 }
 
