@@ -11,18 +11,18 @@ pub use adaptive::*;
 pub use conservative::*;
 pub use fixed::*;
 
+use crate::config::ConfigOpts;
+use crate::metrics::{ChunkMetrics, is_memory_constrained};
+
 /// This is how a strategy advertises itself to an adaptable reader.
-pub trait IsStrategy {
+pub trait IsStrategy: std::fmt::Debug {
     /// What chunk size should we start with?
     fn initial_chunk_size(&self) -> usize;
-    /// What should we use now?
-    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize;
     /// Should we change?
     fn should_adapt(&self, metrics: &ChunkMetrics) -> bool;
+    /// What should we use now?
+    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize;
 }
-
-use crate::constants::INITIAL_CHUNK_SIZE;
-use crate::metrics::ChunkMetrics;
 
 /// Taking Tiger Mountain by
 #[derive(Debug, Clone)]
@@ -44,6 +44,36 @@ impl Strategy {
             Strategy::Adaptive(AdaptiveStrategy::default())
         }
     }
+
+    /// Pick the best strategy based on context
+    pub fn auto_select() -> Self {
+        if is_memory_constrained() {
+            Strategy::Conservative(ConservativeStrategy::default())
+        } else {
+            Strategy::Adaptive(AdaptiveStrategy::default())
+        }
+    }
+
+    /// Create from CLI options
+    pub fn from_config(config: &ConfigOpts) -> Self {
+        // Explicit strategy from CLI
+        if let Some(strategy) = &config.strategy {
+            return strategy.clone();
+        }
+
+        // Conservative mode in debug
+        if config.conservative {
+            return Strategy::Conservative(ConservativeStrategy::default());
+        }
+
+        // Adaptive is off
+        if !config.adaptive {
+            return Strategy::Static(StaticStrategy::default());
+        }
+
+        // Auto-select based on environment
+        Self::auto_select()
+    }
 }
 
 impl Default for Strategy {
@@ -64,27 +94,46 @@ impl From<&str> for Strategy {
 }
 
 impl IsStrategy for Strategy {
+    fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
+        match self {
+            Strategy::Static(s) => s.should_adapt(metrics),
+            Strategy::Adaptive(s) => s.should_adapt(metrics),
+            Strategy::Conservative(s) => s.should_adapt(metrics),
+        }
+    }
+
+    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
+        match self {
+            Strategy::Static(s) => s.adapt_size(metrics, current_size),
+            Strategy::Adaptive(s) => s.adapt_size(metrics, current_size),
+            Strategy::Conservative(s) => s.adapt_size(metrics, current_size),
+        }
+    }
+
     fn initial_chunk_size(&self) -> usize {
         match self {
-            Strategy::Static(v) => v.initial_chunk_size(),
-            Strategy::Adaptive(v) => v.initial_chunk_size(),
-            Strategy::Conservative(_) => INITIAL_CHUNK_SIZE, // TODO
+            Strategy::Static(s) => s.initial_chunk_size(),
+            Strategy::Adaptive(s) => s.initial_chunk_size(),
+            Strategy::Conservative(s) => s.initial_chunk_size(),
         }
     }
+}
 
-    fn adapt_size(&mut self, metrics: &crate::metrics::ChunkMetrics, current_size: usize) -> usize {
-        match self {
-            Strategy::Static(_) => current_size,
-            Strategy::Adaptive(v) => v.adapt_size(metrics, current_size),
-            Strategy::Conservative(v) => v.adapt_size(metrics, current_size),
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    fn should_adapt(&self, metrics: &crate::metrics::ChunkMetrics) -> bool {
-        match self {
-            Strategy::Static(_) => false,
-            Strategy::Adaptive(v) => v.should_adapt(metrics),
-            Strategy::Conservative(v) => v.should_adapt(metrics),
-        }
+    #[test]
+    fn test_strategy_selection() {
+        // Test with adaptive enabled
+        let config = ConfigOpts {
+            adaptive: true,
+            strategy: None,
+            conservative: false,
+            ..Default::default()
+        };
+
+        let strategy = Strategy::from_config(&config);
+        assert!(matches!(strategy, Strategy::Adaptive(_)));
     }
 }

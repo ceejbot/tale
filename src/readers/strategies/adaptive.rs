@@ -79,6 +79,8 @@ impl Default for AdaptiveStrategy {
     }
 }
 
+impl AdaptiveStrategy {}
+
 // We adapt based on performance and memory data as we go
 impl IsStrategy for AdaptiveStrategy {
     fn initial_chunk_size(&self) -> usize {
@@ -89,13 +91,14 @@ impl IsStrategy for AdaptiveStrategy {
         let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
 
         #[cfg(debug_assertions)]
-        eprintln!(
-            "Adaptation: chunks={}, speed={:.2}MB/s, memory={}MB, pressure={:?}",
-            metrics.chunks_seen,
-            metrics.processing_speed_mbps(),
-            metrics.memory_bytes / (1024 * 1024),
-            pressure
-        );
+        {
+            let speed = metrics.processing_speed_mbps();
+            let trend = metrics.speed_moving().trend(self.config.speed_increase_threshold);
+            eprintln!(
+                "Adapt: chunk#{}, size={}, speed={:.2}MB/s, trend={:?}, pressure={:?}",
+                metrics.chunks_seen, current_size, speed, trend, pressure
+            );
+        }
 
         // PRESSURE RELEASE VALVE - immediate drop to minimum
         if matches!(pressure, MemoryPressure::Critical) {
@@ -128,7 +131,7 @@ impl IsStrategy for AdaptiveStrategy {
     }
 
     fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
-        metrics.should_adapt(self.config.interval)
+        metrics.should_adapt(self.config.interval(metrics))
     }
 }
 
@@ -149,7 +152,20 @@ pub struct AdaptationConfig {
     pub shrink_factor: f64, // Multiply size by this (e.g., 0.67)
 
     // How often to check
-    pub interval: usize, // Check every N chunks (e.g., 5)
+    pub interval: usize, // Check every N chunks
+}
+
+impl AdaptationConfig {
+    pub fn interval(&self, metrics: &ChunkMetrics) -> usize {
+        // Adapt more frequently early on, less frequently later
+        if metrics.chunks_seen < 50 {
+            5 // Adapt quickly at start
+        } else if metrics.chunks_seen < 200 {
+            10 // Medium frequency
+        } else {
+            20 // Stable operation
+        }
+    }
 }
 
 impl Default for AdaptationConfig {
@@ -163,7 +179,7 @@ impl Default for AdaptationConfig {
             memory_threshold_mb: 200,        // 200MB default limit
             growth_factor: 1.5,
             shrink_factor: 0.67,
-            interval: 5,
+            interval: 10,
         }
     }
 }

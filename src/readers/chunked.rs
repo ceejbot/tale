@@ -110,24 +110,31 @@ impl ChunkedFileReader {
         let file_size = std::fs::metadata(&path)?.len();
         let config = ChunkConfig::optimal(file_size);
 
-        // TODO config
-        let strategy = StaticStrategy::with_config(config.clone());
-        let _path = path.as_ref().to_path_buf();
-        let mut file = File::open(&path).map_err(TaleError::from)?;
-        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
+        // Get strategy from global config
+        let strategy = Strategy::from_config(&crate::config::config());
 
-        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
+        let path = path.as_ref().to_path_buf();
+        let mut file = File::open(&path)?;
+        file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
 
         Ok(Self {
             file,
             file_size,
             current_position: 0,
-            _path,
+            _path: path,
             config,
             pending_data: Vec::new(),
-            strategy: Strategy::Static(strategy),
+            strategy,
             metrics: ChunkMetrics::new(),
         })
+    }
+
+    /// Create with explicit strategy (for testing)
+    pub fn with_strategy<P: AsRef<Path>>(path: P, strategy: Strategy) -> Result<Self, TaleError> {
+        let mut reader = Self::new(path)?;
+        reader.strategy = strategy;
+        Ok(reader)
     }
 
     /// Pick the optimal chunk size and stick with it
@@ -188,27 +195,17 @@ impl ChunkedFileReader {
         if self.is_at_end() {
             return Ok(None);
         }
+        if self.is_at_end() {
+            return Ok(None);
+        }
 
-        // Adapt chunk size if needed
-        match &mut self.strategy {
-            Strategy::Adaptive(adaptive) => {
-                if adaptive.should_adapt(&self.metrics) {
-                    let new_size = adaptive.adapt_size(&self.metrics, self.config.chunk_size);
-                    self.config.chunk_size = new_size;
-                }
-            }
-            Strategy::Static(_) => {
-                // No adaptation
-            }
-            Strategy::Conservative(_strategy) => {
-                // Conservative adaptation - only shrink, never grow
-                if self.metrics.chunks_seen % 10 == 0 {
-                    // Less frequent
-                    let pressure = detect_memory_pressure(None);
-                    if matches!(pressure, MemoryPressure::High | MemoryPressure::Critical) {
-                        self.config.chunk_size = (self.config.chunk_size / 2).max(4096);
-                    }
-                }
+        // Adapt chunk size based on strategy
+        if self.strategy.should_adapt(&self.metrics) {
+            let new_size = self.strategy.adapt_size(&self.metrics, self.config.chunk_size);
+            if new_size != self.config.chunk_size {
+                #[cfg(debug_assertions)]
+                eprintln!("Chunk size: {} -> {}", self.config.chunk_size, new_size);
+                self.config.chunk_size = new_size;
             }
         }
 
@@ -243,12 +240,11 @@ impl ChunkedFileReader {
             }
         }
 
-        // Count lines in the chunk for metrics
-        let line_count = chunk.data.iter().filter(|&&b| b == b'\n').count() as u64;
-
-        // Record metrics
+        // Record metrics so we can adapt
+        let line_count = chunk.data.iter().filter(|&&b| b == b'\n').count();
         self.metrics
-            .record_chunk_processing(chunk.size(), read_duration, line_count as usize);
+            .record_chunk_processing(chunk.size(), read_duration, line_count);
+
         Ok(Some(chunk))
     }
 

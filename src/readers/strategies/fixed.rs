@@ -40,7 +40,7 @@ impl Default for StaticStrategy {
 }
 
 impl IsStrategy for StaticStrategy {
-    /// the fixed chunk size we should use; defaults to INITIAL_CHUNK_SIZE
+    /// the fixed chunk size we should use
     fn initial_chunk_size(&self) -> usize {
         self.config.chunk_size
     }

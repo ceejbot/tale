@@ -101,8 +101,9 @@ fn enhance_error_context(error: TaleError, path: &Path) -> TaleError {
                     suggestion,
                 ))
                 .into();
+            } else {
+                return TaleError::Io(io_error);
             }
-            TaleError::Io(io_error)
         }
         other => other,
     }

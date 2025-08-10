@@ -57,16 +57,20 @@ pub struct ChunkMetrics {
     /// JSON parsing time: megabytes per millisecond
     pub parsed_per_ms: f64,
     /// how we're tracking megabytes parsed per ms
-    pub parsed_moving: MovingAverage<10>,
+    pub parsed_moving: MovingAverage<20>,
     /// memory usage in bytes
     pub memory_bytes: usize,
-    pub memory_moving: MovingAverage<10>,
+    pub memory_moving: MovingAverage<20>,
     /// Tracking chunk sizes over time
-    pub chunk_sizes: MovingAverage<10>,
+    pub chunk_sizes: MovingAverage<20>,
     // The number of lines per chunk we're seeing
     pub lines_per_chunk: usize,
     /// Tracking the lines per chunk
-    pub lines_moving: MovingAverage<10>,
+    pub lines_moving: MovingAverage<20>,
+    /// Total bytes processed
+    total_bytes: usize,
+    /// Total time spent processing
+    total_duration: Duration,
 }
 
 impl Default for ChunkMetrics {
@@ -86,6 +90,8 @@ impl ChunkMetrics {
             memory_moving: MovingAverage::new(),
             lines_per_chunk: 0,
             lines_moving: MovingAverage::new(),
+            total_bytes: 0,
+            total_duration: Duration::new(0, 0),
         }
     }
 
@@ -114,21 +120,29 @@ impl ChunkMetrics {
         // let efficiency = (expected_parse_time_ms / actual_time_ms.max(1.0)).min(1.0);
 
         self.chunk_sizes.push(chunk_size as f64);
+        self.total_bytes += chunk_size;
+        self.total_duration += duration;
+    }
+
+    pub fn overall_throughput_mbps(&self) -> f64 {
+        let total_mb = self.total_bytes as f64 / (1024.0 * 1024.0);
+        let total_secs = self.total_duration.as_secs_f64();
+        if total_secs > 0.0 { total_mb / total_secs } else { 0.0 }
     }
 
     pub fn processing_speed_mbps(&self) -> f64 {
         self.parsed_moving.average()
     }
 
-    pub fn speed_moving(&self) -> &MovingAverage<10> {
+    pub fn speed_moving(&self) -> &MovingAverage<20> {
         &self.parsed_moving
     }
 
-    pub fn memory_moving(&self) -> &MovingAverage<10> {
+    pub fn memory_moving(&self) -> &MovingAverage<20> {
         &self.memory_moving
     }
 
-    pub fn chunk_sizes(&self) -> &MovingAverage<10> {
+    pub fn chunk_sizes(&self) -> &MovingAverage<20> {
         &self.chunk_sizes
     }
 
