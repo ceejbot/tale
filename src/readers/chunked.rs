@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use miette::{ErrReport, Result};
 
 use super::FileProcessor;
-use super::metrics::*;
 use super::strategies::Strategy;
 use crate::errors::TaleError;
+use crate::metrics::*;
 use crate::readers::strategies::ChunkConfig;
 use crate::readers::{IsStrategy, StaticStrategy};
 

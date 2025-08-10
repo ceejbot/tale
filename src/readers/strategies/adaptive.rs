@@ -6,8 +6,8 @@
 
 use super::*;
 use crate::constants::INITIAL_CHUNK_SIZE;
+use crate::metrics::*;
 use crate::readers::ChunkedFileReader;
-use crate::readers::metrics::*;
 
 /// Here's the reader type that can adapt.
 #[derive(Debug)]

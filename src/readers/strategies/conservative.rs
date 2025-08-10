@@ -1,9 +1,9 @@
 //! This reader only shrinks down to a minimum size.
 //! We'll choose it when we're in very constrained environments.
 
-use super::{ChunkMetrics, IsStrategy};
+use super::IsStrategy;
 use crate::config::*;
-use crate::readers::{MemoryPressure, detect_memory_pressure};
+use crate::metrics::{ChunkMetrics, MemoryPressure, detect_memory_pressure};
 
 #[derive(Debug, Clone, Default)]
 pub struct ConservativeStrategy {
@@ -19,7 +19,7 @@ impl IsStrategy for ConservativeStrategy {
     /// what chunk size we should use next.
     fn adapt_size(&mut self, _metrics: &super::ChunkMetrics, current_size: usize) -> usize {
         let max = config().max_memory;
-        match detect_memory_pressure(Some(max)) {
+        match detect_memory_pressure(max) {
             MemoryPressure::None => current_size,
             MemoryPressure::Low => todo!(),
             MemoryPressure::Medium => todo!(),
@@ -60,7 +60,7 @@ impl ConservativeConfig {
         let total_for_files = ConservativeConfig::PER_FILE_MB * self.num_files;
 
         // System limit: 10% of RAM or 200MB, whichever is smaller
-        let system_limit = if let Some(total_ram_mb) = crate::readers::metrics::get_system_ram_mb() {
+        let system_limit = if let Some(total_ram_mb) = crate::metrics::get_system_ram_mb() {
             std::cmp::min(total_ram_mb / 10, ConservativeConfig::MEMORY_CEILING_MB)
         } else {
             ConservativeConfig::MEMORY_CEILING_MB // Conservative fallback

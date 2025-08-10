@@ -22,7 +22,7 @@ pub trait IsStrategy {
 }
 
 use crate::constants::INITIAL_CHUNK_SIZE;
-use crate::readers::ChunkMetrics;
+use crate::metrics::ChunkMetrics;
 
 /// Taking Tiger Mountain by
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub enum Strategy {
 impl Strategy {
     pub fn pick_strategy() -> Strategy {
         // Always adaptive unless in constrained environment
-        if super::is_memory_constrained() {
+        if crate::metrics::is_memory_constrained() {
             Strategy::Conservative(ConservativeStrategy::default())
         } else {
             Strategy::Adaptive(AdaptiveStrategy::default())
@@ -72,7 +72,7 @@ impl IsStrategy for Strategy {
         }
     }
 
-    fn adapt_size(&mut self, metrics: &super::metrics::ChunkMetrics, current_size: usize) -> usize {
+    fn adapt_size(&mut self, metrics: &crate::metrics::ChunkMetrics, current_size: usize) -> usize {
         match self {
             Strategy::Static(_) => current_size,
             Strategy::Adaptive(v) => v.adapt_size(metrics, current_size),
@@ -80,7 +80,7 @@ impl IsStrategy for Strategy {
         }
     }
 
-    fn should_adapt(&self, metrics: &super::metrics::ChunkMetrics) -> bool {
+    fn should_adapt(&self, metrics: &crate::metrics::ChunkMetrics) -> bool {
         match self {
             Strategy::Static(_) => false,
             Strategy::Adaptive(v) => v.should_adapt(metrics),

@@ -6,6 +6,7 @@ pub mod config;
 pub mod errors;
 pub mod file_state;
 pub mod logpatterns;
+pub mod metrics;
 pub mod multiplexed;
 pub mod readers;
 pub mod watcher;
@@ -91,10 +92,10 @@ pub struct Args {
     adaptive: bool,
     /// Choose a specific chunk strategy for testing
     #[arg(short = 's', long)]
-    chunk_strategy: Strategy,
+    chunk_strategy: Option<Strategy>,
     /// Set a limit on how much memory can be used in file buffers
     #[arg(short, long)]
-    max_memory: usize,
+    max_memory: Option<usize>,
     #[cfg(debug_assertions)]
     #[arg(long, hide = true)]
     conservative: bool,

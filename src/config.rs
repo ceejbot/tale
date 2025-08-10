@@ -20,8 +20,8 @@ pub struct ConfigOpts {
     pub no_file_names: bool,
     pub all_file_names: bool,
     pub adaptive: bool,
-    pub strategy: Strategy,
-    pub max_memory: usize,
+    pub strategy: Option<Strategy>,
+    pub max_memory: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -343,7 +343,6 @@ impl ConfigOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::readers::Strategy;
 
     #[test]
     fn complicated_args() {
@@ -361,8 +360,8 @@ mod tests {
             no_chunked: false,
             args: vec!["-4".to_string()],
             adaptive: false,
-            chunk_strategy: Strategy::default(),
-            max_memory: 10_000_000_000,
+            chunk_strategy: None,
+            max_memory: Some(10_000_000_000),
             conservative: false,
         };
         let config = ConfigOpts::new(&args);

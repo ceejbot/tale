@@ -51,6 +51,7 @@ pub mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::*;
     use crate::readers::*;
 
     #[test]

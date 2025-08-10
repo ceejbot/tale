@@ -6,7 +6,6 @@
 mod backseeking;
 mod buffered;
 mod chunked; // the file processor
-mod metrics; // system stats, moving averages, etc
 mod stdin;
 mod strategies; // the chunking strategies; will figure out naming later
 
@@ -17,7 +16,6 @@ pub use backseeking::*;
 pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
-pub use metrics::*;
 use miette::ErrReport;
 pub use stdin::*;
 pub use strategies::*;

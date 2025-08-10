@@ -4,7 +4,7 @@
 
 use super::IsStrategy;
 use crate::constants::READ_BUFFER_SIZE;
-use crate::readers::ChunkMetrics;
+use crate::metrics::ChunkMetrics;
 
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
