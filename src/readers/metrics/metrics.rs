@@ -8,11 +8,29 @@ pub struct MetricsCollector {
     metrics: ChunkMetrics,
 }
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetricsCollector {
     pub fn new() -> Self {
         Self {
             metrics: ChunkMetrics::new(),
         }
+    }
+
+    pub fn chunks_seen(&self) -> usize {
+        self.metrics.chunks_seen
+    }
+
+    pub fn chunk_sizes_avg(&self) -> f64 {
+        self.metrics.chunk_sizes.average()
+    }
+
+    pub fn processing_speed_mbps(&self) -> f64 {
+        self.metrics.processing_speed_mbps()
     }
 
     pub fn record_chunk(&mut self, chunk_bytes: usize, elapsed_ms: Duration, line_count: usize) {
@@ -35,34 +53,37 @@ impl MetricsCollector {
 #[derive(Debug, Clone)]
 pub struct ChunkMetrics {
     /// Number of chunks processed
-    pub(crate) chunks_seen: usize,
+    pub chunks_seen: usize,
     /// JSON parsing time: megabytes per millisecond
-    pub(super) parsed_per_ms: f64,
+    pub parsed_per_ms: f64,
     /// how we're tracking megabytes parsed per ms
-    pub(super) parsed_moving: MovingAverage<10>,
+    pub parsed_moving: MovingAverage<10>,
     /// memory usage in bytes
-    pub(super) memory_bytes: usize,
-    pub(super) memory_moving: MovingAverage<10>,
-    /// A proxy for my favorite OS stat to look at
-    pub(super) io_wait_time: usize,
-    /// Tracking our iowait proxy over time
-    pub(super) iowait_moving: MovingAverage<10>,
+    pub memory_bytes: usize,
+    pub memory_moving: MovingAverage<10>,
+    /// Tracking chunk sizes over time
+    pub chunk_sizes: MovingAverage<10>,
     // The number of lines per chunk we're seeing
-    pub(super) lines_per_chunk: usize,
+    pub lines_per_chunk: usize,
     /// Tracking the lines per chunk
-    pub(super) lines_moving: MovingAverage<10>,
+    pub lines_moving: MovingAverage<10>,
+}
+
+impl Default for ChunkMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChunkMetrics {
     pub fn new() -> Self {
         Self {
             chunks_seen: 0,
+            chunk_sizes: MovingAverage::new(),
             parsed_per_ms: 0.0,
             parsed_moving: MovingAverage::new(),
             memory_bytes: 0,
             memory_moving: MovingAverage::new(),
-            io_wait_time: 0,
-            iowait_moving: MovingAverage::new(),
             lines_per_chunk: 0,
             lines_moving: MovingAverage::new(),
         }
@@ -88,13 +109,11 @@ impl ChunkMetrics {
         // This is not IOwait, but a proxy: If processing is slow relative to
         // chunk size, we're likely I/O bound. Calculate efficiency metric instead:
         // We want a 50MB/s baseline.
-        let expected_parse_time_ms = chunk_size as f64 / 50_000.0;
-        let actual_time_ms = duration.as_millis() as f64;
-        let efficiency = (expected_parse_time_ms / actual_time_ms.max(1.0)).min(1.0);
+        // let expected_parse_time_ms = chunk_size as f64 / 50_000.0;
+        // let actual_time_ms = duration.as_millis() as f64;
+        // let efficiency = (expected_parse_time_ms / actual_time_ms.max(1.0)).min(1.0);
 
-        // If efficiency < 0.5, we're spending too much time waiting
-        self.io_wait_time = ((1.0 - efficiency) * 100.0) as usize; // Percentage
-        self.iowait_moving.push(self.io_wait_time as f64);
+        self.chunk_sizes.push(chunk_size as f64);
     }
 
     pub fn processing_speed_mbps(&self) -> f64 {
@@ -109,8 +128,8 @@ impl ChunkMetrics {
         &self.memory_moving
     }
 
-    pub fn iowait_moving(&self) -> &MovingAverage<10> {
-        &self.iowait_moving
+    pub fn chunk_sizes(&self) -> &MovingAverage<10> {
+        &self.chunk_sizes
     }
 
     /// We check if we should adapt every often. This means "check if we should
@@ -126,6 +145,12 @@ pub struct MovingAverage<const N: usize> {
     values: [f64; N],
     index: usize,
     count: usize,
+}
+
+impl<const N: usize> Default for MovingAverage<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> MovingAverage<N> {

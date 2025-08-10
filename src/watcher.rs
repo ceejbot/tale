@@ -107,7 +107,7 @@ impl MultiFileWatcher {
         for file_path in self.file_manager.tracked_files() {
             watcher
                 .watch(file_path, RecursiveMode::NonRecursive)
-                .map_err(|e| TaleError::NotifyError(e))?;
+                .map_err(TaleError::NotifyError)?;
         }
 
         // Spawn a task to process notify events and convert them to WatchEvents

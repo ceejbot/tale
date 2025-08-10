@@ -50,6 +50,12 @@ pub struct StdinProcessor<'a> {
     count: u16,
 }
 
+impl<'a> Default for StdinProcessor<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> StdinProcessor<'a> {
     /// Create a new StdinProcessor with standard buffer sizes
     pub fn new() -> Self {

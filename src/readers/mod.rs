@@ -3,22 +3,24 @@
 //! files in a flat hierarchy, which is likely my problem and not anything
 //! wrong with lots of files in a src directory, you know? Anyway.
 
-mod adapting; // the chunking strategies; will figure out naming later
 mod backseeking;
 mod buffered;
 mod chunked; // the file processor
+mod metrics; // system stats, moving averages, etc
 mod stdin;
+mod strategies; // the chunking strategies; will figure out naming later
 
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-pub use adapting::*;
 pub use backseeking::*;
 pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
+pub use metrics::*;
 use miette::ErrReport;
 pub use stdin::*;
+pub use strategies::*;
 
 use crate::constants::*;
 use crate::errors::{FileError, TaleError, find_similar_files};
@@ -33,33 +35,20 @@ pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
         // TODO if we are sticky, we need to watch the file until it
         // appears or the user kills the process.
         let similar_files = find_similar_files(fpath);
-        return Err(FileError::not_found_with_suggestions(fpath.to_path_buf(), similar_files).into());
+        return Err(Box::new(FileError::not_found_with_suggestions(
+            fpath.to_path_buf(),
+            similar_files,
+        ))
+        .into());
     }
 
     // Check if it's actually a file (not a directory, etc.)
     if !fpath.is_file() {
-        return Err(FileError::not_a_file_with_type(fpath.to_path_buf()).into());
+        return Err(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf())).into());
     }
 
     // Try to create processor and provide helpful context for common errors
-    let mut processor = create_file_processor(fpath, None).map_err(|e| {
-        // Check if this is likely a permission error
-        match &e {
-            TaleError::Io(crate::errors::IoError::OperationFailed { source, .. }) => match source.kind() {
-                std::io::ErrorKind::PermissionDenied => {
-                    let suggestion = if cfg!(unix) {
-                        Some(format!("Try: chmod +r {}", fpath.display()))
-                    } else {
-                        Some("Check file permissions in Properties".to_string())
-                    };
-                    return FileError::permission_denied_with_suggestion(fpath.to_path_buf(), suggestion).into();
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        e // Return original error if not a recognized pattern
-    })?;
+    let mut processor = create_file_processor(fpath, None).map_err(|e| enhance_error_context(e, fpath))?;
 
     // BackSeekingProcessor handles its own special cases (negative offsets, bytes,
     // blocks)
@@ -99,6 +88,28 @@ pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
     Ok(())
 }
 
+fn enhance_error_context(error: TaleError, path: &Path) -> TaleError {
+    match error {
+        TaleError::Io(io_error) => {
+            let crate::errors::IoError::OperationFailed { source, .. } = io_error.as_ref();
+            if source.kind() == std::io::ErrorKind::PermissionDenied {
+                let suggestion = if cfg!(unix) {
+                    Some(format!("Try: chmod +r {}", path.display()))
+                } else {
+                    Some("Check file permissions in Properties".to_string())
+                };
+                return Box::new(FileError::permission_denied_with_suggestion(
+                    path.to_path_buf(),
+                    suggestion,
+                ))
+                .into();
+            }
+            TaleError::Io(io_error)
+        }
+        other => other,
+    }
+}
+
 /// Create the optimal file processor for the given file and operation
 pub fn create_file_processor<P: AsRef<Path>>(
     path: P,
@@ -135,7 +146,7 @@ pub fn create_file_processor<P: AsRef<Path>>(
 
     if use_chunked {
         let reader = ChunkedFileReader::with_optimal_config(path)?;
-        return Ok(FileProcessorType::Chunked(reader));
+        return Ok(FileProcessorType::Chunked(Box::new(reader)));
     }
 
     // We'll get here if we have a positive by-lines offset.
@@ -166,7 +177,7 @@ pub trait FileProcessor {
 /// Chonked vs buffered vs can-go-backwards variants.
 pub enum FileProcessorType<'a> {
     Buffered(BufferedFileProcessor),
-    Chunked(ChunkedFileReader),
+    Chunked(Box<ChunkedFileReader>),
     BackSeeking(BackSeekingProcessor<'a>),
 }
 

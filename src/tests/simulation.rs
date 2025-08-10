@@ -25,6 +25,7 @@ pub trait IoSimulator {
     fn throttle_bandwidth(&mut self, bytes_per_sec: usize);
 }
 
+#[derive(Debug, Clone)]
 pub struct StressedIoSimulator {
     data: Vec<u8>,
     position: usize,
@@ -76,10 +77,9 @@ mod tests {
     #[test]
     fn pressure_release_works() {
         let mut strategy = AdaptiveStrategy::default();
-
         // Simulate critical memory
-        mock::set_memory_mb(195); // If limit is 200
-
+        mock::set_mock_memory_mb(195); // If limit is 200
+        let metrics = ChunkMetrics::new();
         let new_size = strategy.adapt_size(&metrics, 256_000);
         assert_eq!(new_size, 4096); // Should drop to minimum
     }

@@ -14,22 +14,22 @@ pub enum TaleError {
     /// File-related errors with helpful context
     #[error("File operation failed")]
     #[diagnostic()]
-    File(#[from] FileError),
+    File(#[from] Box<FileError>),
 
     /// JSON parsing errors with location information
     #[error("JSON format error")]
     #[diagnostic()]
-    Json(#[from] JsonError),
+    Json(#[from] Box<JsonError>),
 
     /// Configuration errors
     #[error("Configuration error")]
     #[diagnostic()]
-    Config(#[from] ConfigError),
+    Config(#[from] Box<ConfigError>),
 
     /// I/O errors with context
     #[error("I/O operation failed")]
     #[diagnostic()]
-    Io(#[from] IoError),
+    Io(#[from] Box<IoError>),
 
     /// Globular errors.
     #[error(transparent)]
@@ -170,7 +170,7 @@ impl JsonError {
     pub fn invalid_syntax_at(src: String, offset: usize, len: usize, details: String) -> Self {
         Self::InvalidSyntax {
             src,
-            span: SourceSpan::new(offset.into(), len.into()),
+            span: SourceSpan::new(offset.into(), len),
             details,
         }
     }
@@ -195,11 +195,11 @@ impl<T> IoErrorExt<T> for Result<T, std::io::Error> {
 /// with ?
 impl From<std::io::Error> for TaleError {
     fn from(err: std::io::Error) -> Self {
-        TaleError::Io(IoError::OperationFailed {
+        TaleError::Io(Box::new(IoError::OperationFailed {
             operation: "I/O operation".to_string(),
             path: None,
             source: err,
-        })
+        }))
     }
 }
 
@@ -207,11 +207,11 @@ impl From<std::io::Error> for TaleError {
 /// with ?
 impl From<serde_json::Error> for TaleError {
     fn from(err: serde_json::Error) -> Self {
-        TaleError::Json(JsonError::InvalidSyntax {
+        TaleError::Json(Box::new(JsonError::InvalidSyntax {
             src: "JSON input".to_string(),
-            span: miette::SourceSpan::new(0.into(), 0usize.into()),
+            span: miette::SourceSpan::new(0.into(), 0usize),
             details: err.to_string(),
-        })
+        }))
     }
 }
 
@@ -241,8 +241,8 @@ pub fn find_similar_files(target: &Path) -> Vec<PathBuf> {
 
     // Sort by similarity/distance
     similar.sort_by(|a, b| {
-        let a_name = a.file_name().unwrap().to_str().unwrap();
-        let b_name = b.file_name().unwrap().to_str().unwrap();
+        let a_name = a.file_name().unwrap_or_default().to_str().unwrap_or_default();
+        let b_name = b.file_name().unwrap_or_default().to_str().unwrap_or_default();
         let a_dist = edit_distance(target_name, a_name);
         let b_dist = edit_distance(target_name, b_name);
         a_dist.cmp(&b_dist)

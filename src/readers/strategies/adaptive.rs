@@ -1,19 +1,19 @@
-//! An adaptive chunked reader, which uses its current strategy
-//! to decide how to read incoming data. Look, don't complain that I'm
-//! overengineering a hobby project. The whole point of a hobby project
-//! is learning through overengineering. And why are you reading this
-//! comment, anyway?
+//! Reading files by adaptive chunk sizes to adapt to memory pressure
+//! and file size. We want to scale down if we're on a puny container
+//! on some Raspberry Pi in the cloud, and scale up if we're on monstro
+//! the memory-stuffed real-hardware luxury box. We also want to cope with
+//! what we're being asked to juggle.
 
-use super::detect_memory_pressure;
-use super::metrics::{ChunkMetrics, MovingAverage};
-use super::{ChunkStrategy, ChunkedFileReader, MemoryPressure, MetricsCollector, Trend};
+use super::*;
 use crate::constants::INITIAL_CHUNK_SIZE;
+use crate::readers::ChunkedFileReader;
+use crate::readers::metrics::*;
 
 /// Here's the reader type that can adapt.
 #[derive(Debug)]
 pub struct AdaptiveChunkReader<T>
 where
-    T: ChunkStrategy,
+    T: IsStrategy,
 {
     reader: ChunkedFileReader,
     controller: AdaptationController<T>,
@@ -22,25 +22,45 @@ where
 #[derive(Debug, Clone)]
 pub struct AdaptationController<T>
 where
-    T: ChunkStrategy,
+    T: IsStrategy,
 {
     strategy: T,
-    metrics: MetricsCollector,
+    collector: MetricsCollector,
     config: AdaptationConfig,
+    adaptations_made: usize,
 }
 
 impl<T> AdaptationController<T>
 where
-    T: ChunkStrategy,
+    T: IsStrategy,
 {
     pub fn should_adapt(&self) -> bool {
-        self.metrics.ready_to_adapt(self.config.interval)
+        self.collector.ready_to_adapt(self.config.interval)
     }
 
     pub fn calculate_new_size(&mut self, current: usize) -> usize {
-        let metrics = self.metrics.snapshot();
-        self.strategy.adapt_size(&metrics, current)
+        self.adaptations_made += 1;
+        let metrics = self.collector.snapshot();
+        self.strategy.adapt_size(metrics, current)
     }
+
+    /// For debug output.
+    pub fn adaptation_stats(&self) -> AdaptationStats {
+        AdaptationStats {
+            chunks_processed: self.collector.chunks_seen(),
+            avg_chunk_size: self.collector.chunk_sizes_avg(),
+            avg_speed_mbps: self.collector.processing_speed_mbps(),
+            adaptations_made: self.adaptations_made,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AdaptationStats {
+    chunks_processed: usize,
+    avg_chunk_size: f64,
+    avg_speed_mbps: f64,
+    adaptations_made: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -60,13 +80,22 @@ impl Default for AdaptiveStrategy {
 }
 
 // We adapt based on performance and memory data as we go
-impl ChunkStrategy for AdaptiveStrategy {
+impl IsStrategy for AdaptiveStrategy {
     fn initial_chunk_size(&self) -> usize {
         self.config.initial_chunk_size
     }
 
     fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
         let pressure = detect_memory_pressure(Some(self.config.memory_threshold_mb));
+
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Adaptation: chunks={}, speed={:.2}MB/s, memory={}MB, pressure={:?}",
+            metrics.chunks_seen,
+            metrics.processing_speed_mbps(),
+            metrics.memory_bytes / (1024 * 1024),
+            pressure
+        );
 
         // PRESSURE RELEASE VALVE - immediate drop to minimum
         if matches!(pressure, MemoryPressure::Critical) {
@@ -126,12 +155,12 @@ pub struct AdaptationConfig {
 impl Default for AdaptationConfig {
     fn default() -> Self {
         Self {
-            min_chunk_size: 4 * 1024,    // 4K bytes
-            max_chunk_size: 1024 * 1024, // 1MB
+            min_chunk_size: 4 * 1024,
+            max_chunk_size: 1024 * 1024,
             initial_chunk_size: INITIAL_CHUNK_SIZE,
-            speed_increase_threshold: Default::default(),
-            _speed_decrease_threshold: Default::default(),
-            memory_threshold_mb: Default::default(),
+            speed_increase_threshold: 5.0,   // 5% improvement to grow
+            _speed_decrease_threshold: -5.0, // 5% degradation to shrink
+            memory_threshold_mb: 200,        // 200MB default limit
             growth_factor: 1.5,
             shrink_factor: 0.67,
             interval: 5,

@@ -13,31 +13,11 @@ use std::path::{Path, PathBuf};
 use miette::{ErrReport, Result};
 
 use super::FileProcessor;
-use super::adapting::*;
-use crate::constants::READ_BUFFER_SIZE;
+use super::metrics::*;
+use super::strategies::Strategy;
 use crate::errors::TaleError;
-use crate::readers::Strategy;
-
-/// Configuration for FileChunk processing
-#[derive(Debug, Clone)]
-pub struct ChunkConfig {
-    /// Size of each chunk in bytes
-    pub chunk_size: usize,
-    /// Maximum overlap between chunks to handle line boundaries
-    pub overlap_size: usize,
-    /// Whether to use memory-constrained processing
-    pub low_memory_mode: bool,
-}
-
-impl Default for ChunkConfig {
-    fn default() -> Self {
-        Self {
-            chunk_size: READ_BUFFER_SIZE,
-            overlap_size: 1024, // 1KB overlap for line boundaries
-            low_memory_mode: false,
-        }
-    }
-}
+use crate::readers::strategies::ChunkConfig;
+use crate::readers::{IsStrategy, StaticStrategy};
 
 /// A chunk of file data with metadata about its position
 #[derive(Debug)]
@@ -103,23 +83,6 @@ impl FileChunk {
     }
 }
 
-/// Determine optimal chunk size based on file characteristics
-pub fn optimal_chunk_size(file_size: u64, available_memory: Option<usize>) -> usize {
-    let default_memory = 10 * 1024 * 1024; // 10MB default
-    let memory_limit = available_memory.unwrap_or(default_memory);
-
-    match file_size {
-        // Small files: use small chunks to minimize overhead
-        0..=1_000_000 => 8_192, // 8KB
-
-        // Medium files: balance memory and I/O efficiency
-        1_000_001..=100_000_000 => 32_768, // 32KB
-
-        // Large files: use large chunks but respect memory limits
-        _ => std::cmp::min(262_144, memory_limit / 10), // 256KB max, or 10% of available memory
-    }
-}
-
 /// Reader that processes files in chunks with line boundary handling
 #[derive(Debug)]
 pub struct ChunkedFileReader {
@@ -129,12 +92,12 @@ pub struct ChunkedFileReader {
     file_size: u64,
     /// Our current position in the file we're reading.
     current_position: u64,
-    /// Current chunk configuration
-    config: ChunkConfig,
     /// The path of the file we're reading from
-    path: PathBuf,
+    _path: PathBuf,
     /// Data from previous chunk that didn't end at line boundary
     pending_data: Vec<u8>,
+    /// config
+    config: ChunkConfig,
     /// What's the strategy, Kenneth?
     strategy: Strategy,
     /// Tracking how we're doing
@@ -145,16 +108,11 @@ impl ChunkedFileReader {
     /// Create a new ChunkedFileReader
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
         let file_size = std::fs::metadata(&path)?.len();
-        let initial_size = optimal_chunk_size(file_size, None);
+        let config = ChunkConfig::optimal(file_size);
 
-        let config = ChunkConfig {
-            chunk_size: initial_size,
-            overlap_size: 1024,
-            low_memory_mode: false,
-        };
-
-        let strategy = Strategy::pick_strategy();
-        let path = path.as_ref().to_path_buf();
+        // TODO config
+        let strategy = StaticStrategy::with_config(config.clone());
+        let _path = path.as_ref().to_path_buf();
         let mut file = File::open(&path).map_err(TaleError::from)?;
         let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
 
@@ -164,19 +122,30 @@ impl ChunkedFileReader {
             file,
             file_size,
             current_position: 0,
+            _path,
             config,
-            path,
             pending_data: Vec::new(),
-            strategy,
+            strategy: Strategy::Static(strategy),
             metrics: ChunkMetrics::new(),
         })
     }
 
-    pub fn new_with_config<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
-        // Always adaptive unless in constrained environment
-        let strategy = Strategy::pick_strategy();
+    /// Pick the optimal chunk size and stick with it
+    pub fn static_optimal<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
+        let _path = path.as_ref().to_path_buf();
+        let mut file = File::open(&path).map_err(TaleError::from)?;
+        let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
+        file.seek(SeekFrom::Start(0)).map_err(TaleError::from)?;
 
-        let path = path.as_ref().to_path_buf();
+        let strategy = StaticStrategy::optimal_for_file(file_size);
+        let mut reader = Self::new(path)?;
+        reader.strategy = Strategy::Static(strategy);
+        Ok(reader)
+    }
+
+    pub fn new_with_config<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
+        let strategy = StaticStrategy::with_config(config.clone());
+        let _path = path.as_ref().to_path_buf();
         let mut file = File::open(&path).map_err(TaleError::from)?;
         let file_size = file.seek(SeekFrom::End(0)).map_err(TaleError::from)?;
 
@@ -186,29 +155,17 @@ impl ChunkedFileReader {
             file,
             file_size,
             current_position: 0,
+            _path,
             config,
-            path,
             pending_data: Vec::new(),
-            strategy,
+            strategy: Strategy::Static(strategy),
             metrics: ChunkMetrics::new(),
         })
     }
 
     /// Create a ChunkedFileReader with optimal configuration for the file
     pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, ErrReport> {
-        let path = path.as_ref().to_path_buf();
-        let file_size = std::fs::metadata(&path).map_err(TaleError::from)?.len();
-
-        let chunk_size = optimal_chunk_size(file_size, None);
-        let config = ChunkConfig {
-            chunk_size,
-            overlap_size: std::cmp::min(1024, chunk_size / 8), // Adaptive overlap
-            low_memory_mode: chunk_size <= 8192,
-        };
-
-        let mut reader = Self::new(path)?;
-        reader.config = config;
-        Ok(reader)
+        Ok(Self::static_optimal(path)?)
     }
 
     /// Get the file size

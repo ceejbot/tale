@@ -10,6 +10,9 @@ pub mod multiplexed;
 pub mod readers;
 pub mod watcher;
 
+#[cfg(test)]
+mod tests;
+
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -201,7 +204,7 @@ async fn main() -> MietteResult<()> {
 }
 
 #[cfg(test)]
-mod tests {
+mod cli_tests {
     use super::*;
 
     #[test]
@@ -244,5 +247,16 @@ mod tests {
         let config = ConfigOpts::new(&args);
         assert!(matches!(config.offset_unit, OffsetUnit::Lines));
         assert_eq!(config.offset, 5);
+    }
+
+    #[test]
+    fn test_cli_with_adaptation() {
+        let output = std::process::Command::new("cargo")
+            .args(&["run", "--", "fixtures/benchmarks/medium.log"])
+            .output()
+            .expect("failed to execute");
+
+        assert!(output.status.success());
+        // Verify output is correct
     }
 }
