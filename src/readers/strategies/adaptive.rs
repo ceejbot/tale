@@ -7,6 +7,7 @@
 use std::time::{Duration, Instant};
 
 use super::*;
+use super::fixed::{align_to_block_size, get_optimal_block_size};
 use crate::constants::INITIAL_CHUNK_SIZE;
 use crate::metrics::*;
 
@@ -90,23 +91,29 @@ impl IsStrategy for AdaptiveStrategy {
             return self.config.min_chunk_size;
         }
 
-        // High pressure - gradual reduction
+        // High pressure - gradual reduction (block-aligned)
         if matches!(pressure, MemoryPressure::High) {
-            return (current_size_bytes as f64 * 0.5) as usize; // Aggressive shrink
+            let shrunk_size = (current_size_bytes as f64 * 0.5) as usize;
+            return align_to_block_size(shrunk_size, get_optimal_block_size());
         }
 
         let newsize = match pressure {
-            MemoryPressure::Critical => self.config.min_chunk_size,
-            MemoryPressure::High => (current_size_bytes as f64 * self.config.shrink_factor) as usize,
+            MemoryPressure::Critical => self.config.min_chunk_size, // Already block-aligned
+            MemoryPressure::High => {
+                let shrunk = (current_size_bytes as f64 * self.config.shrink_factor) as usize;
+                align_to_block_size(shrunk, get_optimal_block_size())
+            },
             _ => {
                 let moving_ave = metrics.speed_moving();
                 let perf = moving_ave.trend(self.config.speed_increase_threshold);
-                match perf {
+                let new_size = match perf {
                     Trend::Improving => (current_size_bytes as f64 * self.config.growth_factor) as usize,
                     Trend::Degrading => (current_size_bytes as f64 * self.config.shrink_factor) as usize,
                     Trend::Stable => current_size_bytes,
                     Trend::Unknown => current_size_bytes,
-                }
+                };
+                // Align the new size to block boundaries
+                align_to_block_size(new_size, get_optimal_block_size())
             }
         };
         let clamped = newsize.clamp(self.config.min_chunk_size, self.config.max_chunk_size);
@@ -154,10 +161,11 @@ impl AdaptationConfig {
 
 impl Default for AdaptationConfig {
     fn default() -> Self {
+        let block_size = get_optimal_block_size();
         Self {
-            min_chunk_size: 8 * 1024,        // 8K
-            max_chunk_size: 5 * 1024 * 1024, // Increase to 5MB
-            initial_chunk_size: INITIAL_CHUNK_SIZE,
+            min_chunk_size: align_to_block_size(8 * 1024, block_size),        // 8K aligned
+            max_chunk_size: align_to_block_size(5 * 1024 * 1024, block_size), // 5MB aligned
+            initial_chunk_size: align_to_block_size(INITIAL_CHUNK_SIZE, block_size),
             speed_increase_threshold: 3.0,  // Lower threshold
             _speed_decrease_threshold: 0.0, // Less frequent adaptation
             memory_threshold_mb: 200,

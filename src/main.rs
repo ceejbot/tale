@@ -6,6 +6,7 @@ pub mod config;
 pub mod constants;
 pub mod errors;
 pub mod file_state;
+pub mod json_profiler;
 pub mod logpatterns;
 pub mod metrics;
 pub mod multiplexed;
@@ -100,6 +101,10 @@ pub struct Args {
     #[cfg(debug_assertions)]
     #[arg(long, hide = true)]
     conservative: bool,
+    /// Print JSON parsing profile report after processing (debug builds only)
+    #[cfg(debug_assertions)]
+    #[arg(long, hide = true)]
+    profile_json: bool,
 
     /// (offset) [file ...] where offset can be +N, -N, or N.
     #[arg(allow_hyphen_values = true)]
@@ -122,12 +127,20 @@ fn v3_styles() -> Styles {
 pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> Result<(), TaleError> {
     match serde_json::from_str::<Printable<'_>>(line) {
         Ok(message) => {
+            // Profile which variant was parsed (debug builds only for minimal overhead)
+            #[cfg(debug_assertions)]
+            json_profiler::record_variant(&message);
+            
             message.write(buffer);
             outlock.write_all(buffer.chunk())?;
             outlock.write_all(&[0x0a; 1])?; // blank line
             buffer.clear();
         }
         Err(_) => {
+            // Profile parse failures (debug builds only)
+            #[cfg(debug_assertions)]
+            json_profiler::record_parse_error();
+            
             outlock.write_all(line.as_bytes())?;
             outlock.write_all(b"\n")?;
         }
@@ -172,6 +185,13 @@ async fn main() -> MietteResult<()> {
         }
     };
 
+    // Print JSON profiling report automatically in debug builds
+    #[cfg(debug_assertions)]
+    {
+        eprintln!();
+        json_profiler::print_report();
+    }
+    
     // Convert TaleError to miette Report for display
     result.map_err(miette::Report::from)
 }

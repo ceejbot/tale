@@ -22,6 +22,8 @@ pub struct ConfigOpts {
     pub adaptive: bool,
     pub strategy: Option<Strategy>,
     pub max_memory: Option<usize>,
+    #[cfg(debug_assertions)]
+    pub profile_json: bool,
 }
 
 #[derive(Debug, Clone, Default, Copy)]
@@ -339,6 +341,8 @@ impl ConfigOpts {
             conservative: args.conservative,
             #[cfg(not(debug_assertions))]
             conservative: false,
+            #[cfg(debug_assertions)]
+            profile_json: args.profile_json,
         }
     }
 }
