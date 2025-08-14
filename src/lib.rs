@@ -18,6 +18,7 @@ pub mod logpatterns;
 pub mod memory_budget;
 pub mod metrics;
 pub mod multiplexed;
+pub mod production_defaults;
 pub mod readers;
 pub mod watcher;
 

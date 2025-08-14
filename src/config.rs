@@ -140,8 +140,11 @@ pub use runtime::{config, set};
 #[cfg(test)]
 pub use runtime::{update, with_config};
 
+use std::str::FromStr;
+
 use crate::errors::TaleError;
-use crate::readers::Strategy;
+use crate::production_defaults::{ProductionDefaults, get_production_config};
+use crate::readers::{Strategy, StaticStrategy, AdaptiveStrategy, ConservativeStrategy};
 
 // Public convenience accessors - these work with both implementations
 pub fn tailing() -> bool {
@@ -257,6 +260,8 @@ fn handle_possible_paths(args: &[String]) -> Vec<PathBuf> {
 
 impl ConfigOpts {
     pub fn new(args: &crate::Args) -> Self {
+        // Get production defaults
+        let prod_config = get_production_config();
         let (mode, maybe_offset) = match args.args.len() {
             0 => (InputMode::Stdin, None),
             1 => {
@@ -322,6 +327,43 @@ impl ConfigOpts {
             (0, OffsetUnit::Lines)
         };
 
+        // Apply production defaults
+        let max_memory = args.max_memory.unwrap_or_else(|| {
+            // Use production default memory budget
+            let system_percentage = prod_config.memory_percentage;
+            if let Some(memory_stats) = memory_stats::memory_stats() {
+                let system_memory = memory_stats.physical_mem;
+                let calculated = (system_memory as f64 * system_percentage / 100.0) as usize;
+                // Clamp to production limits
+                calculated
+                    .max(ProductionDefaults::MIN_MEMORY_BUDGET)
+                    .min(ProductionDefaults::MAX_MEMORY_BUDGET)
+            } else {
+                // Fallback to reasonable default
+                prod_config.max_memory_mb * 1024 * 1024
+            }
+        });
+        
+        // Use specified strategy or production default
+        let strategy = args.chunk_strategy.clone().or_else(|| {
+            match prod_config.strategy {
+                "static" => Some(Strategy::Static(StaticStrategy::default())),
+                "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
+                "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
+                _ => Some(Strategy::Conservative(ConservativeStrategy::default())),
+            }
+        });
+        
+        // Determine chunking behavior based on production defaults if not specified
+        let force_chunked = if args.chunked {
+            true
+        } else if args.no_chunked {
+            false
+        } else {
+            // Use production default based on preset
+            prod_config.force_chunked
+        };
+        
         Self {
             tailing: args.follow || args.sticky,
             sticky: args.sticky,
@@ -330,13 +372,13 @@ impl ConfigOpts {
             show_time: args.timestamps,
             batch_window_ms: args.window,
             mode,
-            force_chunked: args.chunked,
+            force_chunked,
             disable_chunked: args.no_chunked,
             no_file_names: args.quiet,
             all_file_names: args.verbose,
             adaptive: args.adaptive,
-            strategy: args.chunk_strategy.clone(),
-            max_memory: args.max_memory,
+            strategy,
+            max_memory: Some(max_memory),
             #[cfg(debug_assertions)]
             conservative: args.conservative,
             #[cfg(not(debug_assertions))]
