@@ -12,9 +12,7 @@ pub struct ConservativeStrategy {
 
 impl IsStrategy for ConservativeStrategy {
     fn initial_chunk_size(&self) -> usize {
-        let per_chunk = self.config.calculate_limit_bytes() / self.config.num_files;
-        // self.config.chunk_size = per_chunk;
-        per_chunk
+        self.config.calculate_limit_bytes() / self.config.num_files
     }
 
     /// Given the current chunk size and current metrics, make a decision about

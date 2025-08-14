@@ -20,9 +20,9 @@ impl StaticStrategy {
         };
         let base_size = 4 * 1024 * 1024; // 4MB base
         let aligned_size = align_to_block_size(base_size, get_optimal_block_size());
-        Self { 
+        Self {
             chunk_size: aligned_size,
-            config 
+            config,
         }
     }
 
@@ -34,16 +34,18 @@ impl StaticStrategy {
 
     pub fn with_config(config: ChunkConfig) -> Self {
         let aligned_size = align_to_block_size(READ_BUFFER_SIZE, get_optimal_block_size());
-        Self { 
+        Self {
             chunk_size: aligned_size,
-            config 
+            config,
         }
     }
 }
 
 impl Default for StaticStrategy {
     fn default() -> Self {
-        let aligned_size = align_to_block_size(READ_BUFFER_SIZE, get_optimal_block_size());
+        // Use production default chunk size
+        let default_size = crate::production_defaults::ProductionDefaults::DEFAULT_CHUNK_SIZE;
+        let aligned_size = align_to_block_size(default_size, get_optimal_block_size());
         Self {
             chunk_size: aligned_size,
             config: ChunkConfig::default(),
@@ -97,7 +99,7 @@ impl ChunkConfig {
 /// Align chunk size to filesystem block boundaries for optimal I/O
 pub fn align_to_block_size(size: usize, block_size: usize) -> usize {
     // Round up to nearest block boundary
-    ((size + block_size - 1) / block_size) * block_size
+    size.div_ceil(block_size) * block_size
 }
 
 /// Get optimal filesystem block size based on typical modern filesystems
@@ -108,24 +110,9 @@ pub fn get_optimal_block_size() -> usize {
 }
 
 /// Determine optimal chunk size based on file characteristics
-pub fn optimal_chunk_size(file_size: u64, available_memory: Option<usize>) -> usize {
-    let default_memory = 10 * 1024 * 1024; // 10MB default
-    let memory_limit = available_memory.unwrap_or(default_memory);
-    let block_size = get_optimal_block_size();
-
-    let base_size = match file_size {
-        // Small files: use small chunks to minimize overhead
-        0..=1_000_000 => 8_192, // 8KB base
-
-        // Medium files: balance memory and I/O efficiency
-        1_000_001..=100_000_000 => 32_768, // 32KB base
-
-        // Large files: use large chunks but respect memory limits
-        _ => std::cmp::min(262_144, memory_limit / 10), // 256KB max base, or 10% of available memory
-    };
-
-    // Align to block boundaries for optimal I/O performance
-    align_to_block_size(base_size, block_size)
+pub fn optimal_chunk_size(file_size: u64, _available_memory: Option<usize>) -> usize {
+    // Use production defaults for optimal chunk sizing
+    crate::production_defaults::ProductionDefaults::optimal_chunk_for_file(file_size)
 }
 
 #[cfg(test)]
@@ -135,16 +122,16 @@ mod tests {
     #[test]
     fn test_block_alignment() {
         let block_size = 4096;
-        
+
         // Test exact alignment
         assert_eq!(align_to_block_size(4096, block_size), 4096);
         assert_eq!(align_to_block_size(8192, block_size), 8192);
-        
+
         // Test rounding up
         assert_eq!(align_to_block_size(4097, block_size), 8192);
         assert_eq!(align_to_block_size(1000, block_size), 4096);
         assert_eq!(align_to_block_size(9000, block_size), 12288);
-        
+
         // Test zero and small values
         assert_eq!(align_to_block_size(0, block_size), 0);
         assert_eq!(align_to_block_size(1, block_size), 4096);
@@ -153,17 +140,17 @@ mod tests {
     #[test]
     fn test_optimal_chunk_sizes_are_aligned() {
         let block_size = get_optimal_block_size();
-        
+
         // Test different file sizes
         let small_chunk = optimal_chunk_size(500_000, None);
         let medium_chunk = optimal_chunk_size(50_000_000, None);
         let large_chunk = optimal_chunk_size(500_000_000, None);
-        
+
         // All should be aligned to block boundaries
         assert_eq!(small_chunk % block_size, 0);
         assert_eq!(medium_chunk % block_size, 0);
         assert_eq!(large_chunk % block_size, 0);
-        
+
         println!("Block-aligned chunk sizes:");
         println!("  Small file (500KB): {} bytes", small_chunk);
         println!("  Medium file (50MB): {} bytes", medium_chunk);

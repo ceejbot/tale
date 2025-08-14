@@ -756,7 +756,7 @@ mod tests {
         use std::path::PathBuf;
 
         // Lines from a single file with no timestamps - should maintain original order
-        let lines = vec![
+        let lines = [
             (PathBuf::from("test.log"), 0, r#"{"message": "third line"}"#.to_string()),
             (PathBuf::from("test.log"), 1, r#"{"message": "first line"}"#.to_string()),
             (
@@ -786,7 +786,7 @@ mod tests {
 
         // Lines with identical timestamps - should maintain original order (stable
         // sort)
-        let lines = vec![
+        let lines = [
             (
                 PathBuf::from("test.log"),
                 0,

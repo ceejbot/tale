@@ -3,8 +3,8 @@
 
 use clap::Parser;
 use miette::Result as MietteResult;
-use tale::{Args, config::{ConfigOpts, InputMode}, json_profiler, multiplexed, readers};
-use tale::config;
+use tale::config::{ConfigOpts, InputMode};
+use tale::{Args, config, json_profiler, multiplexed, readers};
 
 /// Parse our options and do the thing.
 #[tokio::main]
@@ -35,7 +35,7 @@ async fn main() -> MietteResult<()> {
         eprintln!();
         json_profiler::print_report();
     }
-    
+
     // Convert TaleError to miette Report for display
     result.map_err(miette::Report::from)
 }
@@ -52,8 +52,8 @@ mod cli_tests {
 
     #[test]
     fn offset_unit_args() {
-        use tale::config::OffsetUnit;
-        use tale::{Args, config::ConfigOpts};
+        use tale::Args;
+        use tale::config::{ConfigOpts, OffsetUnit};
 
         // Test bytes offset detection - test the config struct directly
         let args = Args {
@@ -89,7 +89,7 @@ mod cli_tests {
     #[test]
     fn test_cli_with_adaptation() {
         let output = std::process::Command::new("cargo")
-            .args(&["run", "--", "fixtures/benchmarks/medium.log"])
+            .args(["run", "--", "fixtures/benchmarks/medium.log"])
             .output()
             .expect("failed to execute");
 

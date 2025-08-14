@@ -64,8 +64,11 @@ mod runtime {
     }
 
     /// Set configuration - one-time initialization only
-    pub fn set(input: ConfigOpts) -> Result<(), ConfigOpts> {
-        CONFIG.set(input)
+    pub fn set(input: ConfigOpts) -> Result<(), Box<ConfigOpts>> {
+        match CONFIG.set(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(Box::new(e)),
+        }
     }
 }
 
@@ -83,7 +86,7 @@ mod runtime {
 
     /// Get configuration - returns owned value from thread-local storage
     pub fn config() -> ConfigOpts {
-        TEST_CONFIG.with(|cfg| cfg.borrow().as_ref().cloned().unwrap_or_else(|| ConfigOpts::default()))
+        TEST_CONFIG.with(|cfg| cfg.borrow().as_ref().cloned().unwrap_or_else(ConfigOpts::default))
     }
 
     /// Set configuration - can be called multiple times per thread
@@ -140,11 +143,9 @@ pub use runtime::{config, set};
 #[cfg(test)]
 pub use runtime::{update, with_config};
 
-use std::str::FromStr;
-
 use crate::errors::TaleError;
 use crate::production_defaults::{ProductionDefaults, get_production_config};
-use crate::readers::{Strategy, StaticStrategy, AdaptiveStrategy, ConservativeStrategy};
+use crate::readers::{AdaptiveStrategy, ConservativeStrategy, StaticStrategy, Strategy};
 
 // Public convenience accessors - these work with both implementations
 pub fn tailing() -> bool {
@@ -334,26 +335,24 @@ impl ConfigOpts {
             if let Some(memory_stats) = memory_stats::memory_stats() {
                 let system_memory = memory_stats.physical_mem;
                 let calculated = (system_memory as f64 * system_percentage / 100.0) as usize;
-                // Clamp to production limits
-                calculated
-                    .max(ProductionDefaults::MIN_MEMORY_BUDGET)
-                    .min(ProductionDefaults::MAX_MEMORY_BUDGET)
+                calculated.clamp(
+                    ProductionDefaults::MIN_MEMORY_BUDGET,
+                    ProductionDefaults::MAX_MEMORY_BUDGET,
+                )
             } else {
                 // Fallback to reasonable default
                 prod_config.max_memory_mb * 1024 * 1024
             }
         });
-        
+
         // Use specified strategy or production default
-        let strategy = args.chunk_strategy.clone().or_else(|| {
-            match prod_config.strategy {
-                "static" => Some(Strategy::Static(StaticStrategy::default())),
-                "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
-                "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
-                _ => Some(Strategy::Conservative(ConservativeStrategy::default())),
-            }
+        let strategy = args.chunk_strategy.clone().or_else(|| match prod_config.strategy {
+            "static" => Some(Strategy::Static(StaticStrategy::default())),
+            "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
+            "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
+            _ => Some(Strategy::Conservative(ConservativeStrategy::default())),
         });
-        
+
         // Determine chunking behavior based on production defaults if not specified
         let force_chunked = if args.chunked {
             true
@@ -363,7 +362,7 @@ impl ConfigOpts {
             // Use production default based on preset
             prod_config.force_chunked
         };
-        
+
         Self {
             tailing: args.follow || args.sticky,
             sticky: args.sticky,
@@ -465,9 +464,9 @@ mod tests {
             });
 
             // Verify the changes
-            assert_eq!(tailing(), true);
+            assert!(tailing());
             assert_eq!(offset(), 20);
-            assert_eq!(show_time(), true);
+            assert!(show_time());
         });
     }
 
@@ -496,9 +495,9 @@ mod tests {
             || {
                 // Inside this closure, config should be changed
                 assert_eq!(offset(), 42);
-                assert_eq!(tailing(), true);
+                assert!(tailing());
                 assert_eq!(batch_window_ms(), 500);
-                assert_eq!(force_chunked(), true);
+                assert!(force_chunked());
 
                 // Return a value to verify the closure ran
                 "test_successful"
@@ -543,7 +542,10 @@ mod tests {
             .collect();
 
         // Collect results
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().expect("test results should always be ok"))
+            .collect();
         assert_eq!(results, vec![0, 1, 2]);
     }
 
@@ -567,15 +569,15 @@ mod tests {
         // Use with_config to isolate this test
         with_config(test_config, || {
             // Test all accessor functions
-            assert_eq!(tailing(), true);
-            assert_eq!(sticky(), true);
+            assert!(tailing());
+            assert!(sticky());
             assert_eq!(offset(), -100);
             assert!(matches!(offset_unit(), OffsetUnit::Blocks));
-            assert_eq!(show_time(), true);
+            assert!(show_time());
             assert_eq!(batch_window_ms(), 1000);
             assert!(matches!(mode(), InputMode::SingleFile { .. }));
-            assert_eq!(force_chunked(), true);
-            assert_eq!(disable_chunked(), false);
+            assert!(force_chunked());
+            assert!(!disable_chunked());
         });
     }
 }

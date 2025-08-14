@@ -1,10 +1,10 @@
 //! JSON deserialization profiling for Phase 2.3
-//! 
-//! This module provides tools to profile JSON parsing performance and 
+//!
+//! This module provides tools to profile JSON parsing performance and
 //! measure which Printable variants are hit most frequently.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::logpatterns::Printable;
 
@@ -12,7 +12,7 @@ use crate::logpatterns::Printable;
 #[derive(Debug, Default)]
 pub struct VariantCounters {
     pub canonical: AtomicUsize,
-    pub java: AtomicUsize, 
+    pub java: AtomicUsize,
     pub message: AtomicUsize,
     pub time_only: AtomicUsize,
     pub json: AtomicUsize,
@@ -83,7 +83,7 @@ impl VariantCounts {
     }
 
     pub fn successful_parses(&self) -> usize {
-        self.total() - self.text  // Text is plain text, not JSON
+        self.total() - self.text // Text is plain text, not JSON
     }
 
     pub fn json_parses(&self) -> usize {
@@ -112,29 +112,44 @@ impl VariantCounts {
     pub fn print_report(&self) {
         let percentages = self.percentages();
         let total = self.total();
-        
+
         println!("JSON Parsing Profile Report:");
         println!("============================");
         println!("Total lines processed: {}", total);
-        println!("JSON lines: {} ({:.1}%)", self.json_parses(), 
-                 (self.json_parses() as f64 / total as f64) * 100.0);
+        println!(
+            "JSON lines: {} ({:.1}%)",
+            self.json_parses(),
+            (self.json_parses() as f64 / total as f64) * 100.0
+        );
         println!("Plain text: {} ({:.1}%)", self.text, percentages.text);
         println!("Parse errors: {} ({:.1}%)", self.parse_errors, percentages.parse_errors);
         println!();
         println!("JSON Variant Breakdown:");
-        println!("  Canonical: {} ({:.1}%) - FASTEST", self.canonical, percentages.canonical);
+        println!(
+            "  Canonical: {} ({:.1}%) - FASTEST",
+            self.canonical, percentages.canonical
+        );
         println!("  Java:      {} ({:.1}%)", self.java, percentages.java);
         println!("  Message:   {} ({:.1}%) - FLEXIBLE", self.message, percentages.message);
         println!("  TimeOnly:  {} ({:.1}%)", self.time_only, percentages.time_only);
         println!("  Generic:   {} ({:.1}%) - FALLBACK", self.json, percentages.json);
         println!();
-        
+
         if percentages.canonical > 50.0 {
-            println!("✅ Good: {}% of logs use the fast Canonical path", percentages.canonical);
+            println!(
+                "✅ Good: {}% of logs use the fast Canonical path",
+                percentages.canonical
+            );
         } else if percentages.canonical > 25.0 {
-            println!("⚠️  Moderate: {}% of logs use the fast Canonical path", percentages.canonical);
+            println!(
+                "⚠️  Moderate: {}% of logs use the fast Canonical path",
+                percentages.canonical
+            );
         } else {
-            println!("❌ Poor: Only {}% of logs use the fast Canonical path", percentages.canonical);
+            println!(
+                "❌ Poor: Only {}% of logs use the fast Canonical path",
+                percentages.canonical
+            );
             println!("   Consider adding more fields to Canonical or optimizing Message parsing");
         }
     }
@@ -179,7 +194,7 @@ mod tests {
     #[test]
     fn test_variant_counting() {
         reset_counters();
-        
+
         // This would require creating actual Printable instances
         // For now, just test the percentage calculation
         let counts = VariantCounts {
@@ -191,7 +206,7 @@ mod tests {
             time_only: 0,
             parse_errors: 0,
         };
-        
+
         let percentages = counts.percentages();
         assert_eq!(counts.total(), 100);
         assert!((percentages.canonical - 50.0).abs() < 0.1);

@@ -1,11 +1,14 @@
-//! File processing architecture with different strategies for various use cases.
+//! File processing architecture with different strategies for various use
+//! cases.
 //!
 //! This module provides a clean hierarchy of file processors:
 //!
 //! ## Processors
 //! - **BufferedFileProcessor**: Simple forward-only reading for small files
-//! - **ChunkedFileReader**: Memory-efficient processing with Strategy-based adaptation
-//! - **BackSeekingProcessor**: Handles backward seeking and tail-like functionality
+//! - **ChunkedFileReader**: Memory-efficient processing with Strategy-based
+//!   adaptation
+//! - **BackSeekingProcessor**: Handles backward seeking and tail-like
+//!   functionality
 //!
 //! ## Strategy Pattern
 //! ChunkedFileReader uses the Strategy pattern for chunk size management:
@@ -118,13 +121,13 @@ fn enhance_error_context(error: TaleError, path: &Path) -> TaleError {
                 } else {
                     Some("Check file permissions in Properties".to_string())
                 };
-                return Box::new(FileError::permission_denied_with_suggestion(
+                Box::new(FileError::permission_denied_with_suggestion(
                     path.to_path_buf(),
                     suggestion,
                 ))
-                .into();
+                .into()
             } else {
-                return TaleError::Io(io_error);
+                TaleError::Io(io_error)
             }
         }
         other => other,
@@ -274,7 +277,8 @@ mod tests {
         // Large files should use large chunks
         assert_eq!(optimal_chunk_size(500_000_000, None), 524_288); // Updated for production defaults
 
-        // Memory constraint should be respected (this test needs to be removed as it's no longer supported)
+        // Memory constraint should be respected (this test needs to be removed
+        // as it's no longer supported)
         // assert_eq!(optimal_chunk_size(500_000_000, Some(100_000)), 10_000);
     }
 
@@ -469,7 +473,7 @@ mod tests {
         // Read chunks and verify content
         let mut all_content = String::new();
         while let Some(chunk) = reader.read_chunk()? {
-            let chunk_str = std::str::from_utf8(&chunk.data).unwrap();
+            let chunk_str = std::str::from_utf8(&chunk.data).expect("we expected a valid utf8 string in this test");
             all_content.push_str(chunk_str);
         }
 
@@ -489,7 +493,10 @@ mod tests {
 
         let remainder = chunk.split_at_last_line();
         assert!(remainder.is_some());
-        assert_eq!(remainder.unwrap(), b"partial");
+        assert_eq!(
+            remainder.expect("we expected some remainder after the end of the line"),
+            b"partial"
+        );
         assert_eq!(chunk.data, b"line1\nline2\n");
         assert!(chunk.ends_at_line_boundary);
     }

@@ -40,7 +40,6 @@ pub mod memimpl {
     use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
     use super::*;
-    use crate::config;
 
     static SYSTEM: LazyLock<Mutex<System>> = LazyLock::new(|| {
         let processes = ProcessRefreshKind::nothing().with_cpu().with_memory();
@@ -61,11 +60,11 @@ pub mod memimpl {
     static PID: OnceLock<Pid> = OnceLock::new();
     pub fn pid() -> Option<Pid> {
         if let Some(pid) = PID.get() {
-            Some(pid.clone())
+            Some(*pid)
         } else {
             match sysinfo::get_current_pid() {
                 Ok(p) => {
-                    PID.set(p.clone()).expect("unexpected failure to store PID in oncelock");
+                    PID.set(p).expect("unexpected failure to store PID in oncelock");
                     Some(p)
                 }
                 Err(_) => None,
@@ -87,14 +86,13 @@ pub mod memimpl {
             return MemoryPressure::Unknown;
         };
         let rss = process.memory() as usize;
-        let max_allowed = max_allowed_bytes.unwrap_or_else(|| crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
+        let max_allowed =
+            max_allowed_bytes.unwrap_or_else(|| crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
         let free = system.free_memory() as usize;
         // let total = system.total_memory();
         // eprintln!("memory: rss={rss}; max_allowed={max_allowed}; free={free};");
 
-        if rss > max_allowed {
-            MemoryPressure::Critical
-        } else if rss > free {
+        if rss > max_allowed || rss > free {
             MemoryPressure::Critical
         } else {
             let percent = (rss * 100) as f64 / max_allowed as f64;
@@ -116,7 +114,7 @@ pub mod memimpl {
         let mut system = system();
         system.refresh_processes(to_update, true);
         let free = system.free_memory() as usize;
-        let total = system.total_memory() as usize;
+        // let total = system.total_memory() as usize;
 
         let Some(process) = system.process(pid) else {
             return free as usize;
@@ -124,11 +122,11 @@ pub mod memimpl {
         let rss = process.memory() as usize;
         let max_allowed = crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);
 
-        eprintln!("system: total={total} free={free}; process: rss={rss}; max: {max_allowed}");
+        // eprintln!("system: total={total} free={free}; process: rss={rss}; max:
+        // {max_allowed}");
 
         let remaining_budget = max_allowed.saturating_sub(rss);
-        let available = std::cmp::min(free, remaining_budget);
-        available
+        std::cmp::min(free, remaining_budget)
     }
 
     pub fn process_memory_bytes() -> usize {

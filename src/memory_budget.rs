@@ -14,13 +14,13 @@
 //! ## Usage
 //! ```
 //! let mut budget = MemoryBudget::new(100 * 1024 * 1024)?; // 100MB limit
-//! 
+//!
 //! // Allocate memory for a chunk
 //! if let Some(allocation) = budget.try_allocate(chunk_size, "reader_1")? {
 //!     // Process with allocated memory
 //!     allocation.deallocate(); // Automatic on drop
 //! }
-//! 
+//!
 //! // Check memory pressure
 //! match budget.current_pressure() {
 //!     MemoryPressure::Low => { /* normal operation */ },
@@ -52,10 +52,10 @@ impl MemoryPressure {
     /// Get the adaptation factor for chunk sizes based on pressure level
     pub fn chunk_size_factor(&self) -> f64 {
         match self {
-            MemoryPressure::Low => 1.0,        // No reduction
-            MemoryPressure::Moderate => 0.8,   // 20% reduction
-            MemoryPressure::High => 0.5,       // 50% reduction
-            MemoryPressure::Critical => 0.25,  // 75% reduction
+            MemoryPressure::Low => 1.0,       // No reduction
+            MemoryPressure::Moderate => 0.8,  // 20% reduction
+            MemoryPressure::High => 0.5,      // 50% reduction
+            MemoryPressure::Critical => 0.25, // 75% reduction
         }
     }
 
@@ -142,7 +142,7 @@ struct MemoryBudgetInner {
 impl MemoryBudgetInner {
     fn new(total_limit: usize) -> Result<Self, TaleError> {
         let system_memory = get_system_memory_available()?;
-        
+
         Ok(Self {
             total_limit,
             current_usage: 0,
@@ -202,7 +202,7 @@ impl MemoryBudgetInner {
 
     fn current_pressure(&self) -> MemoryPressure {
         let usage_ratio = self.current_usage as f64 / self.total_limit as f64;
-        
+
         match usage_ratio {
             r if r < 0.60 => MemoryPressure::Low,
             r if r < 0.85 => MemoryPressure::Moderate,
@@ -234,9 +234,10 @@ impl MemoryBudget {
 
     /// Try to allocate memory for a specific reader
     pub fn try_allocate(&self, size: usize, reader_id: &str) -> Result<Option<MemoryAllocation>, TaleError> {
-        let mut inner = self.inner.write().map_err(|_| {
-            TaleError::MemoryError("Failed to acquire budget lock for allocation".to_string())
-        })?;
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| TaleError::MemoryError("Failed to acquire budget lock for allocation".to_string()))?;
 
         if inner.try_allocate(size, reader_id)? {
             let allocation = MemoryAllocation::new(size, reader_id.to_string(), self.inner.clone());
@@ -248,17 +249,19 @@ impl MemoryBudget {
 
     /// Get current memory pressure level
     pub fn current_pressure(&self) -> Result<MemoryPressure, TaleError> {
-        let inner = self.inner.read().map_err(|_| {
-            TaleError::MemoryError("Failed to acquire budget lock for pressure check".to_string())
-        })?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| TaleError::MemoryError("Failed to acquire budget lock for pressure check".to_string()))?;
         Ok(inner.current_pressure())
     }
 
     /// Get current memory usage statistics
     pub fn usage_stats(&self) -> Result<MemoryBudgetStats, TaleError> {
-        let inner = self.inner.read().map_err(|_| {
-            TaleError::MemoryError("Failed to acquire budget lock for stats".to_string())
-        })?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| TaleError::MemoryError("Failed to acquire budget lock for stats".to_string()))?;
 
         Ok(MemoryBudgetStats {
             total_limit: inner.total_limit,
@@ -272,9 +275,10 @@ impl MemoryBudget {
 
     /// Get memory statistics for a specific reader
     pub fn reader_stats(&self, reader_id: &str) -> Result<Option<ReaderMemoryStats>, TaleError> {
-        let inner = self.inner.read().map_err(|_| {
-            TaleError::MemoryError("Failed to acquire budget lock for reader stats".to_string())
-        })?;
+        let inner = self
+            .inner
+            .read()
+            .map_err(|_| TaleError::MemoryError("Failed to acquire budget lock for reader stats".to_string()))?;
         Ok(inner.reader_stats.get(reader_id).cloned())
     }
 
@@ -329,9 +333,11 @@ impl MemoryBudgetStats {
         println!("Memory Budget Report:");
         println!("====================");
         println!("Total Limit:    {} MB", self.total_limit / (1024 * 1024));
-        println!("Current Usage:  {} MB ({:.1}%)", 
-                 self.current_usage / (1024 * 1024), 
-                 self.usage_percentage());
+        println!(
+            "Current Usage:  {} MB ({:.1}%)",
+            self.current_usage / (1024 * 1024),
+            self.usage_percentage()
+        );
         println!("Peak Usage:     {} MB", self.peak_usage / (1024 * 1024));
         println!("Available:      {} MB", self.available_memory() / (1024 * 1024));
         println!("Pressure Level: {:?}", self.pressure);
@@ -368,79 +374,79 @@ mod tests {
     #[test]
     fn test_memory_budget_allocation() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?; // 1KB limit
-        
+
         // First allocation should succeed
         let alloc1 = budget.try_allocate(500, "reader1")?;
         assert!(alloc1.is_some());
-        
+
         // Second allocation within limit should succeed
         let alloc2 = budget.try_allocate(400, "reader2")?;
         assert!(alloc2.is_some());
-        
+
         // Third allocation exceeding limit should fail
         let alloc3 = budget.try_allocate(200, "reader3")?;
         assert!(alloc3.is_none());
-        
+
         // After dropping first allocation, new allocation should succeed
         drop(alloc1);
         let alloc4 = budget.try_allocate(300, "reader4")?;
         assert!(alloc4.is_some());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_memory_pressure_calculation() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
-        
+
         // Low pressure (< 60%)
         let _alloc1 = budget.try_allocate(500, "reader1")?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Low);
-        
+
         // Moderate pressure (60-85%)
         let _alloc2 = budget.try_allocate(150, "reader2")?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Moderate);
-        
+
         // High pressure (85-95%)
         let _alloc3 = budget.try_allocate(200, "reader3")?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::High);
-        
+
         // Critical pressure (> 95%)
         let _alloc4 = budget.try_allocate(100, "reader4")?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Critical);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_recommended_chunk_size() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
-        
+
         // Low pressure - no reduction
         assert_eq!(budget.recommended_chunk_size(1000)?, 1000);
-        
+
         // Force moderate pressure
         let _alloc = budget.try_allocate(700, "reader1")?;
         assert_eq!(budget.recommended_chunk_size(1000)?, 800); // 20% reduction
-        
+
         Ok(())
     }
 
     #[test]
     fn test_allocation_automatic_cleanup() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
-        
+
         {
             let _alloc1 = budget.try_allocate(500, "reader1")?;
             let _alloc2 = budget.try_allocate(400, "reader2")?;
             let stats = budget.usage_stats()?;
             assert_eq!(stats.current_usage, 900);
         } // Allocations dropped here
-        
+
         // After drop, usage should be 0
         let stats = budget.usage_stats()?;
         assert_eq!(stats.current_usage, 0);
-        
+
         Ok(())
     }
 }

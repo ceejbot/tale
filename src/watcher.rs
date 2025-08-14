@@ -116,10 +116,10 @@ impl MultiFileWatcher {
             while let Ok(result) = notify_receiver.recv() {
                 match result {
                     Ok(event) => {
-                        if let Some(watch_event) = Self::convert_notify_event(event) {
-                            if event_sender_clone.send(watch_event).is_err() {
-                                break; // Receiver dropped
-                            }
+                        if let Some(watch_event) = Self::convert_notify_event(event)
+                            && event_sender_clone.send(watch_event).is_err()
+                        {
+                            break; // Receiver dropped
                         }
                     }
                     Err(e) => {

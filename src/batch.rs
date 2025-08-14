@@ -296,7 +296,10 @@ impl BatchProcessor {
         self.window_start = None;
 
         // Send the sorted batch
-        Ok(batch_sender.send(sorted_lines)?)
+        match batch_sender.send(sorted_lines) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(TaleError::BatchedLineVecSender),
+        }
     }
 
     /// Force emit all pending lines as a batch

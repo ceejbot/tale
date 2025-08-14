@@ -98,21 +98,19 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
                 match watch_event {
                     Some(WatchEvent::FileModified(path)) => {
                         // File was modified, read new lines
-                        if let Some(state) = watcher.file_manager_mut().get_state_mut(&path) {
-                            if let Ok(_changed) = state.refresh() {
-                                if let Ok(new_lines) = state.read_new_lines() {
-                                    // Send lines to batch processor
-                                    for (line_num, line) in new_lines.into_iter().enumerate() {
-                                        let batched_line = BatchedLine::new(
-                                            line,
-                                            path.clone(),
-                                            line_num as u64
-                                        );
-                                        match line_sender.send(batched_line) {
-                                            Ok(_) => todo!(),
-                                            Err(e) => return Err(TaleError::from(e)),
-                                        }
-                                    }
+                        if let Some(state) = watcher.file_manager_mut().get_state_mut(&path)
+                            && let Ok(_changed) = state.refresh()
+                            && let Ok(new_lines) = state.read_new_lines() {
+                            // Send lines to batch processor
+                            for (line_num, line) in new_lines.into_iter().enumerate() {
+                                let batched_line = BatchedLine::new(
+                                    line,
+                                    path.clone(),
+                                    line_num as u64
+                                );
+                                match line_sender.send(batched_line) {
+                                    Ok(v) => v,
+                                    Err(_) => return Err(TaleError::BatchedLineSender)
                                 }
                             }
                         }

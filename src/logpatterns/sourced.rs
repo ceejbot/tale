@@ -147,7 +147,7 @@ impl FileNameTracker {
     }
 }
 
-static TRACKER: LazyLock<FileNameTracker> = LazyLock::new(|| FileNameTracker::new());
+static TRACKER: LazyLock<FileNameTracker> = LazyLock::new(FileNameTracker::new);
 
 impl<'a> PrettyPrintable for SourcedLine<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
@@ -197,10 +197,10 @@ mod tests {
             }
             Printable::Json(ref generic_json) => {
                 // Handle JSON that didn't match other patterns - try to extract message field
-                if let Some(obj) = generic_json.rest.as_object() {
-                    if let Some(message) = obj.get("message") {
-                        return message.as_str().unwrap_or_default().to_string();
-                    }
+                if let Some(obj) = generic_json.rest.as_object()
+                    && let Some(message) = obj.get("message")
+                {
+                    return message.as_str().unwrap_or_default().to_string();
                 }
                 String::default()
             }
@@ -257,7 +257,7 @@ mod tests {
         use std::path::PathBuf;
 
         // Mix of timestamped and non-timestamped lines
-        let lines = vec![
+        let lines = [
             (
                 PathBuf::from("file1.log"),
                 0,
@@ -330,7 +330,7 @@ mod tests {
         use std::path::PathBuf;
 
         // Invalid JSON should be treated as non-timestamped
-        let lines = vec![
+        let lines = [
             (PathBuf::from("test.log"), 0, "not json at all".to_string()),
             (
                 PathBuf::from("test.log"),

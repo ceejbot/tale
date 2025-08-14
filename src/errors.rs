@@ -6,8 +6,6 @@ use miette::{Diagnostic, ErrReport, SourceSpan};
 use owo_colors::OwoColorize;
 use thiserror::Error;
 
-use crate::batch::BatchedLine;
-
 /// Main error type for tale operations
 #[derive(Error, Debug, Diagnostic)]
 pub enum TaleError {
@@ -41,19 +39,16 @@ pub enum TaleError {
     #[diagnostic()]
     GlobPattern(#[from] glob::PatternError),
 
-    #[error(transparent)]
-    #[diagnostic()]
-    BatchedLineSendVec(#[from] tokio::sync::mpsc::error::SendError<Vec<BatchedLine>>),
-
-    #[error(transparent)]
-    #[diagnostic()]
-    BatchedLineSendSingle(#[from] tokio::sync::mpsc::error::SendError<BatchedLine>),
-
     #[error("Internal error: failed to set up async channels for lines")]
     LineReceiver,
 
     #[error("Internal error: failed to set up async channels")]
     BatchSender,
+
+    #[error("Internal error: trouble sending batched lines on async channels")]
+    BatchedLineSender,
+    #[error("Internal error: trouble sending batched vectors of lines on async channels")]
+    BatchedLineVecSender,
 
     #[error(transparent)]
     #[diagnostic()]
@@ -237,10 +232,11 @@ pub fn find_similar_files(target: &Path) -> Vec<PathBuf> {
     let mut similar = Vec::new();
 
     for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str() {
-            if name != target_name && is_similar(target_name, name) {
-                similar.push(entry.path());
-            }
+        if let Some(name) = entry.file_name().to_str()
+            && name != target_name
+            && is_similar(target_name, name)
+        {
+            similar.push(entry.path());
         }
     }
 

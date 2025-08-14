@@ -6,3 +6,4 @@
 
 # Benchmark test files (large)
 /fixtures/benchmarks/*.log
+/tmp

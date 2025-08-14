@@ -1,13 +1,15 @@
 //! Memory-efficient chunked file processing with strategy-based adaptation.
 //!
-//! `ChunkedFileReader` processes large files in manageable chunks while maintaining:
+//! `ChunkedFileReader` processes large files in manageable chunks while
+//! maintaining:
 //! - **Bounded memory usage**: Memory footprint independent of file size
 //! - **Line boundary handling**: Proper JSON line parsing across chunks
 //! - **Adaptive performance**: Strategy pattern for chunk size optimization
 //! - **Metrics collection**: Performance tracking for adaptation decisions
 //!
 //! ## Architecture
-//! - Strategy owns chunk_size (StaticStrategy, AdaptiveStrategy, ConservativeStrategy)
+//! - Strategy owns chunk_size (StaticStrategy, AdaptiveStrategy,
+//!   ConservativeStrategy)
 //! - ChunkConfig holds immutable settings (overlap_size, low_memory_mode)
 //! - FileChunk manages data boundaries and line parsing
 //! - ChunkMetrics tracks performance for adaptive strategies
@@ -27,7 +29,7 @@ use miette::{ErrReport, Result};
 use super::FileProcessor;
 use super::strategies::Strategy;
 use crate::errors::TaleError;
-use crate::memory_budget::{MemoryBudget, MemoryAllocation, MemoryPressure};
+use crate::memory_budget::{MemoryAllocation, MemoryBudget, MemoryPressure};
 use crate::metrics::*;
 use crate::readers::strategies::ChunkConfig;
 use crate::readers::{IsStrategy, StaticStrategy};
@@ -106,7 +108,7 @@ pub struct ChunkedFileReader {
     /// Our current position in the file we're reading.
     current_position: u64,
     /// The path of the file we're reading from
-    path: PathBuf,
+    _path: PathBuf,
     /// Data from previous chunk that didn't end at line boundary
     pending_data: Vec<u8>,
     /// What's the strategy, Kenneth?
@@ -130,10 +132,11 @@ impl ChunkedFileReader {
         let strategy = Strategy::from_config(&crate::config::config(), Some(file_size));
 
         let path = path.as_ref().to_path_buf();
-        let reader_id = format!("chunked_reader_{}", path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown"));
-        
+        let reader_id = format!(
+            "chunked_reader_{}",
+            path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+        );
+
         let mut file = File::open(&path)?;
         file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
@@ -150,7 +153,7 @@ impl ChunkedFileReader {
             file,
             file_size,
             current_position: 0,
-            path,
+            _path: path,
             pending_data: Vec::new(),
             strategy,
             metrics: ChunkMetrics::new(),
@@ -217,11 +220,9 @@ impl ChunkedFileReader {
         }
 
         // Let strategy adapt if needed (every 20 chunks)
-        if self.metrics.chunks_seen % 20 == 0 {
-            if self.strategy.should_adapt(&self.metrics) {
-                let current_size = self.strategy.initial_chunk_size();
-                self.strategy.adapt_size(&self.metrics, current_size);
-            }
+        if self.metrics.chunks_seen % 20 == 0 && self.strategy.should_adapt(&self.metrics) {
+            let current_size = self.strategy.initial_chunk_size();
+            self.strategy.adapt_size(&self.metrics, current_size);
         }
 
         // Get base chunk size from strategy
@@ -233,22 +234,25 @@ impl ChunkedFileReader {
             if let Ok(pressure) = budget.current_pressure() {
                 let factor = pressure.chunk_size_factor();
                 chunk_size = (chunk_size as f64 * factor) as usize;
-                
+
                 // Don't let it get too small
                 chunk_size = chunk_size.max(4096); // Minimum 4KB
-                
+
                 // Log critical memory pressure
                 if matches!(pressure, MemoryPressure::Critical) {
-                    eprintln!("⚠️  Critical memory pressure - reducing chunk size to {} bytes", chunk_size);
+                    eprintln!(
+                        "⚠️  Critical memory pressure - reducing chunk size to {} bytes",
+                        chunk_size
+                    );
                 }
             }
-            
+
             // Try to allocate memory for this chunk
             let total_allocation_needed = chunk_size + self.pending_data.len();
-            
+
             // Release previous allocation first
             self.current_allocation = None;
-            
+
             // Try to allocate new chunk
             match budget.try_allocate(total_allocation_needed, &self.reader_id) {
                 Ok(Some(allocation)) => {
@@ -257,24 +261,25 @@ impl ChunkedFileReader {
                 Ok(None) => {
                     // Allocation failed - try with smaller chunk size
                     let emergency_size = chunk_size / 4; // Emergency 25% size
-                    if emergency_size >= 1024 { // Don't go below 1KB
+                    if emergency_size >= 1024 {
+                        // Don't go below 1KB
                         chunk_size = emergency_size;
-                        let emergency_allocation = budget.try_allocate(
-                            emergency_size + self.pending_data.len(), 
-                            &self.reader_id
-                        )?;
+                        let emergency_allocation =
+                            budget.try_allocate(emergency_size + self.pending_data.len(), &self.reader_id)?;
                         if let Some(allocation) = emergency_allocation {
                             self.current_allocation = Some(allocation);
                             eprintln!("🆘 Emergency memory allocation - using {} byte chunks", chunk_size);
                         } else {
                             return Err(TaleError::MemoryError(
-                                "Cannot allocate memory even for emergency chunk size".to_string()
-                            ).into());
+                                "Cannot allocate memory even for emergency chunk size".to_string(),
+                            )
+                            .into());
                         }
                     } else {
                         return Err(TaleError::MemoryError(
-                            "Out of memory - chunk size would be too small".to_string()
-                        ).into());
+                            "Out of memory - chunk size would be too small".to_string(),
+                        )
+                        .into());
                     }
                 }
                 Err(e) => return Err(e.into()),
@@ -306,10 +311,11 @@ impl ChunkedFileReader {
 
         // Handle line boundaries: if chunk doesn't end at a line boundary,
         // save the partial line for the next chunk
-        if !chunk.ends_at_line_boundary && !self.is_at_end() {
-            if let Some(remainder) = chunk.split_at_last_line() {
-                self.pending_data = remainder;
-            }
+        if !chunk.ends_at_line_boundary
+            && !self.is_at_end()
+            && let Some(remainder) = chunk.split_at_last_line()
+        {
+            self.pending_data = remainder;
         }
 
         // Record metrics so we can adapt

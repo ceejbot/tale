@@ -215,10 +215,10 @@ impl FileStateManager {
         let mut changed_files = Vec::new();
 
         for (path, state) in &mut self.states {
-            if let Ok(changed) = state.refresh() {
-                if changed {
-                    changed_files.push(path.clone());
-                }
+            if let Ok(changed) = state.refresh()
+                && changed
+            {
+                changed_files.push(path.clone());
             }
         }
 

@@ -5,6 +5,7 @@
 //! and adaptive chunking strategies.
 
 use std::io::{self, Write};
+
 use bytes::{Buf, BytesMut};
 use logpatterns::*;
 
@@ -23,13 +24,13 @@ pub mod readers;
 pub mod watcher;
 
 // Re-export commonly used types for convenience
+use clap::Parser;
+use clap::builder::Styles;
+use clap::builder::styling::AnsiColor;
 pub use errors::TaleError;
 pub use memory_budget::{MemoryBudget, MemoryPressure};
 pub use readers::FileProcessor;
 
-use clap::Parser;
-use clap::builder::Styles;
-use clap::builder::styling::AnsiColor;
 use crate::readers::Strategy;
 
 #[derive(Debug, Clone, Parser, Default)]
@@ -129,7 +130,7 @@ pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutL
             // Profile which variant was parsed (debug builds only for minimal overhead)
             #[cfg(debug_assertions)]
             json_profiler::record_variant(&message);
-            
+
             message.write(buffer);
             outlock.write_all(buffer.chunk())?;
             outlock.write_all(&[0x0a; 1])?; // blank line
@@ -139,7 +140,7 @@ pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutL
             // Profile parse failures (debug builds only)
             #[cfg(debug_assertions)]
             json_profiler::record_parse_error();
-            
+
             outlock.write_all(line.as_bytes())?;
             outlock.write_all(b"\n")?;
         }

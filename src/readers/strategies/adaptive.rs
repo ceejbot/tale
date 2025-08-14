@@ -6,12 +6,13 @@
 
 use std::time::{Duration, Instant};
 
-use super::*;
 use super::fixed::{align_to_block_size, get_optimal_block_size};
+use super::*;
 use crate::constants::INITIAL_CHUNK_SIZE;
 use crate::metrics::*;
 
-// AdaptiveChunkReader and AdaptationController removed - functionality moved to Strategy enum
+// AdaptiveChunkReader and AdaptationController removed - functionality moved to
+// Strategy enum
 
 #[derive(Debug, Clone)]
 struct MemoryCache {
@@ -53,9 +54,10 @@ impl Default for AdaptiveStrategy {
 
 impl AdaptiveStrategy {
     pub fn optimal_for_file(file_size: u64) -> Self {
-        let mut config = AdaptationConfig::default();
-        // Start at the same size static would use
-        config.initial_chunk_size = optimal_chunk_size(file_size, None);
+        let config = AdaptationConfig {
+            initial_chunk_size: optimal_chunk_size(file_size, None),
+            ..Default::default()
+        };
         Self {
             config,
             ..Default::default()
@@ -102,7 +104,7 @@ impl IsStrategy for AdaptiveStrategy {
             MemoryPressure::High => {
                 let shrunk = (current_size_bytes as f64 * self.config.shrink_factor) as usize;
                 align_to_block_size(shrunk, get_optimal_block_size())
-            },
+            }
             _ => {
                 let moving_ave = metrics.speed_moving();
                 let perf = moving_ave.trend(self.config.speed_increase_threshold);
@@ -163,7 +165,7 @@ impl Default for AdaptationConfig {
     fn default() -> Self {
         let block_size = get_optimal_block_size();
         Self {
-            min_chunk_size: align_to_block_size(8 * 1024, block_size),        // 8K aligned
+            min_chunk_size: align_to_block_size(8 * 1024, block_size), // 8K aligned
             max_chunk_size: align_to_block_size(5 * 1024 * 1024, block_size), // 5MB aligned
             initial_chunk_size: align_to_block_size(INITIAL_CHUNK_SIZE, block_size),
             speed_increase_threshold: 3.0,  // Lower threshold

@@ -4,11 +4,11 @@
 //! the memory-stuffed real-hardware luxury box. We also want to cope with
 //! what we're being asked to juggle.
 
+mod collector;
 mod memory;
-mod metrics;
 
+pub use collector::*;
 pub use memory::*;
-pub use metrics::*;
 
 pub fn is_memory_constrained() -> bool {
     // Check if we're in a container, low memory system, etc.

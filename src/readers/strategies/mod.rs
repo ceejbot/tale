@@ -1,6 +1,7 @@
 //! Strategy pattern for chunk size management in ChunkedFileReader.
 //!
-//! This module implements different strategies for determining optimal chunk sizes:
+//! This module implements different strategies for determining optimal chunk
+//! sizes:
 //!
 //! ## Strategy Types
 //! - **StaticStrategy**: Fixed chunk size optimized for file size
