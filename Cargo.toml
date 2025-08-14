@@ -45,7 +45,11 @@ rust_2018_idioms = { level = "warn", priority = 4 }
 unwrap_used = "deny"
 
 [profile.release]
-lto = "thin"
+lto = true           # Enable full link-time optimization
+codegen-units = 1    # Single codegen unit for better optimization
+opt-level = 3        # Maximum optimization
+strip = true         # Strip symbols for smaller binary
+panic = "abort"      # Smaller binary, no unwinding
 
 [profile.dev]
 debug-assertions = true

@@ -4,7 +4,9 @@
 use clap::Parser;
 use miette::Result as MietteResult;
 use tale::config::{ConfigOpts, InputMode};
-use tale::{Args, config, json_profiler, multiplexed, readers};
+use tale::{Args, config, multiplexed, readers};
+#[cfg(debug_assertions)]
+use tale::json_profiler;
 
 /// Parse our options and do the thing.
 #[tokio::main]
