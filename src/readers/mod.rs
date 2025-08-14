@@ -45,7 +45,7 @@ use miette::ErrReport;
 pub use stdin::*;
 pub use strategies::*;
 
-use crate::constants::*;
+use crate::defaults::{io::*, processing::*};
 use crate::errors::{FileError, TaleError, find_similar_files};
 use crate::{config, process_line};
 
@@ -152,13 +152,13 @@ pub fn create_file_processor<P: AsRef<Path>>(
 
     let offset = config::offset();
     let offset_unit = config::offset_unit();
-    let large_offset = offset.abs() > 10_000; // TODO magic number
+    let large_offset = offset.abs() > LARGE_OFFSET_THRESHOLD as i64;
 
-    // Pick which processor suits the situation; TODO more magic numbers
+    // Pick which processor suits the situation based on file size and offset
     let use_chunked = !config::disable_chunked()
         && (config::force_chunked() ||
-        (file_size > 100_000_000 && large_offset) || // 100MB+ with large offset
-        file_size > 1_000_000_000); // Always chunk files >1GB
+        (file_size > CHUNKED_WITH_OFFSET_FILE_SIZE && large_offset) ||
+        file_size > ALWAYS_CHUNKED_FILE_SIZE);
 
     // This is the only reader that can handle negative block and byte offsets, and
     // it already handles them reasonably (though its chunks might not be

@@ -6,7 +6,7 @@
 
 pub use memimpl::*;
 
-use crate::constants::MEMORY_LIMIT_BYTES;
+use crate::defaults::memory::MEMORY_LIMIT_BYTES;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryPressure {

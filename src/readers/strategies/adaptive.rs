@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use super::fixed::{align_to_block_size, get_optimal_block_size};
 use super::*;
-use crate::constants::INITIAL_CHUNK_SIZE;
+use crate::defaults::io::INITIAL_CHUNK_SIZE;
 use crate::metrics::*;
 
 // AdaptiveChunkReader and AdaptationController removed - functionality moved to

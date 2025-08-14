@@ -1,19 +1,62 @@
-//! Production default settings for tale
+//! System defaults and configuration constants for Tale
 //!
-//! These defaults are based on extensive benchmarking and optimization work
-//! from Phases 1-3 of the adaptive chunking improvements. They provide optimal
-//! balance between performance, memory efficiency, and reliability.
-//!
-//! ## Key Principles
-//! - **Memory Safety**: Prevent OOM while maximizing performance
-//! - **Adaptive Behavior**: Start conservative, adapt based on metrics
-//! - **Block Alignment**: All sizes aligned to 4KB filesystem blocks
-//! - **Progressive Degradation**: Graceful handling of resource constraints
+//! This module provides all configuration constants, system defaults, and
+//! preset configurations for the Tale log processing tool. It consolidates
+//! what were previously separate constants.rs and production_defaults.rs modules.
 
-/// Production defaults for chunked file processing
-pub struct ProductionDefaults;
+use std::time::Duration;
 
-impl ProductionDefaults {
+/// Basic I/O and processing constants
+pub mod io {
+    use super::Duration;
+
+    /// How long we wait before flushing data to stdout when tailing.
+    pub const TAIL_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
+    /// Flush stdout when we've written at least this many lines.
+    pub const FLUSH_LINE_COUNT: u16 = 40;
+
+    /// Default capacity for line strings.
+    pub const LINE_CAPACITY: usize = 512;
+
+    /// Buffer size for reading from stdin/files.
+    pub const READ_BUFFER_SIZE: usize = 8192;
+
+    /// Default capacity for output byte buffers.
+    pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
+
+    /// The initial chunk size to use for adaptive chunked readers.
+    pub const INITIAL_CHUNK_SIZE: usize = 32 * 1024; // 32K bytes
+}
+
+/// File processing thresholds and decision constants
+pub mod processing {
+    /// Large offset threshold - offsets above this suggest large file operations
+    pub const LARGE_OFFSET_THRESHOLD: u64 = 10_000;
+
+    /// File size requiring chunked processing when combined with large offset
+    pub const CHUNKED_WITH_OFFSET_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100MB
+
+    /// File size that always requires chunked processing regardless of offset
+    pub const ALWAYS_CHUNKED_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
+
+    /// Number of chunks between strategy adaptation checks
+    pub const ADAPTATION_INTERVAL: usize = 20;
+
+    /// The traditional unix block size in bytes.
+    pub const BLOCK_SIZE: u64 = 512;
+}
+
+/// Memory management constants
+pub mod memory {
+    /// Memory limit for line buffering in negative line offset mode.
+    pub const MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024; // 10MB
+}
+
+/// System defaults for chunked file processing and configuration management
+pub struct SystemDefaults;
+
+impl SystemDefaults {
     /// Default memory budget as percentage of system memory
     ///
     /// Benchmark results show 10% provides good balance:
@@ -123,20 +166,31 @@ impl ProductionDefaults {
     pub const EMERGENCY_ALLOCATION_FACTOR: f64 = 0.25; // 25% of requested size
 }
 
-/// Production configuration presets
+/// System configuration presets
 pub enum ConfigPreset {
     /// Optimized for small files and low memory systems
     LowMemory,
-    /// Balanced for general use (default)
+    /// Balanced performance and memory usage
     Balanced,
-    /// Optimized for large files and high throughput
+    /// Optimized for maximum performance
     HighPerformance,
-    /// Maximum safety and predictability
+    /// Optimized for memory-constrained environments
     Conservative,
 }
 
+/// Configuration settings for each preset
+pub struct PresetSettings {
+    pub memory_percentage: f64,
+    pub max_memory_mb: usize,
+    pub default_chunk_kb: usize,
+    pub max_chunk_kb: usize,
+    pub strategy: &'static str,
+    pub force_chunked: bool,
+    pub adaptation_interval: usize,
+}
+
 impl ConfigPreset {
-    /// Get recommended settings for this preset
+    /// Get settings for this preset
     pub fn settings(&self) -> PresetSettings {
         match self {
             ConfigPreset::LowMemory => PresetSettings {
@@ -206,31 +260,25 @@ impl ConfigPreset {
     }
 }
 
-/// Settings for a configuration preset
-pub struct PresetSettings {
-    pub memory_percentage: f64,
-    pub max_memory_mb: usize,
-    pub default_chunk_kb: usize,
-    pub max_chunk_kb: usize,
-    pub strategy: &'static str,
-    pub force_chunked: bool,
-    pub adaptation_interval: usize,
-}
-
-/// Get production-ready configuration based on environment
-pub fn get_production_config() -> PresetSettings {
-    // Check for environment variable override
+/// Get production configuration based on environment or auto-detection
+pub fn get_system_config() -> PresetSettings {
+    // Check for environment override
     if let Ok(preset_name) = std::env::var("TALE_PRESET") {
-        match preset_name.to_lowercase().as_str() {
-            "low" | "lowmemory" => ConfigPreset::LowMemory.settings(),
-            "high" | "performance" => ConfigPreset::HighPerformance.settings(),
-            "conservative" | "safe" => ConfigPreset::Conservative.settings(),
-            _ => ConfigPreset::Balanced.settings(),
-        }
-    } else {
-        // Auto-detect based on system
-        ConfigPreset::auto_detect().settings()
+        let preset = match preset_name.to_lowercase().as_str() {
+            "low" | "lowmemory" | "low_memory" => ConfigPreset::LowMemory,
+            "balanced" | "balance" => ConfigPreset::Balanced,
+            "high" | "highperformance" | "high_performance" => ConfigPreset::HighPerformance,
+            "conservative" | "conserve" => ConfigPreset::Conservative,
+            _ => {
+                eprintln!("Warning: Unknown TALE_PRESET '{}', using auto-detection", preset_name);
+                ConfigPreset::auto_detect()
+            }
+        };
+        return preset.settings();
     }
+
+    // Auto-detect based on system
+    ConfigPreset::auto_detect().settings()
 }
 
 #[cfg(test)]
@@ -242,23 +290,23 @@ mod tests {
         // Test that chunk sizes are block-aligned
         const BLOCK_SIZE: usize = 4096;
 
-        let tiny = ProductionDefaults::optimal_chunk_for_file(50_000);
+        let tiny = SystemDefaults::optimal_chunk_for_file(50_000);
         assert_eq!(tiny % BLOCK_SIZE, 0);
-        assert_eq!(tiny, ProductionDefaults::MIN_CHUNK_SIZE);
+        assert_eq!(tiny, SystemDefaults::MIN_CHUNK_SIZE);
 
-        let small = ProductionDefaults::optimal_chunk_for_file(500_000);
+        let small = SystemDefaults::optimal_chunk_for_file(500_000);
         assert_eq!(small % BLOCK_SIZE, 0);
         assert_eq!(small, 8 * 1024);
 
-        let medium = ProductionDefaults::optimal_chunk_for_file(5_000_000);
+        let medium = SystemDefaults::optimal_chunk_for_file(5_000_000);
         assert_eq!(medium % BLOCK_SIZE, 0);
-        assert_eq!(medium, ProductionDefaults::DEFAULT_CHUNK_SIZE);
+        assert_eq!(medium, SystemDefaults::DEFAULT_CHUNK_SIZE);
 
-        let large = ProductionDefaults::optimal_chunk_for_file(50_000_000);
+        let large = SystemDefaults::optimal_chunk_for_file(50_000_000);
         assert_eq!(large % BLOCK_SIZE, 0);
         assert_eq!(large, 128 * 1024);
 
-        let huge = ProductionDefaults::optimal_chunk_for_file(2_000_000_000);
+        let huge = SystemDefaults::optimal_chunk_for_file(2_000_000_000);
         assert_eq!(huge % BLOCK_SIZE, 0);
         assert_eq!(huge, 1024 * 1024);
     }
@@ -266,10 +314,10 @@ mod tests {
     #[test]
     fn test_chunking_decision() {
         // Should not chunk tiny files
-        assert!(!ProductionDefaults::should_chunk_by_default(100_000));
+        assert!(!SystemDefaults::should_chunk_by_default(100_000));
 
         // Should chunk files > 1MB
-        assert!(ProductionDefaults::should_chunk_by_default(2_000_000));
+        assert!(SystemDefaults::should_chunk_by_default(2_000_000));
     }
 
     #[test]
@@ -290,22 +338,25 @@ mod tests {
         assert!(!high_perf.force_chunked);
     }
 
-    /*
     #[test]
-    fn test_memory_thresholds() {
-        // Verify thresholds are properly ordered
-        assert!(
-            ProductionDefaults::MEMORY_PRESSURE_LOW_THRESHOLD < ProductionDefaults::MEMORY_PRESSURE_MODERATE_THRESHOLD
-        );
-        assert!(
-            ProductionDefaults::MEMORY_PRESSURE_MODERATE_THRESHOLD < ProductionDefaults::MEMORY_PRESSURE_HIGH_THRESHOLD
-        );
-        assert!(ProductionDefaults::MEMORY_PRESSURE_HIGH_THRESHOLD < 1.0);
-
-        // Verify factors decrease with pressure
-        assert!(ProductionDefaults::PRESSURE_FACTOR_LOW > ProductionDefaults::PRESSURE_FACTOR_MODERATE);
-        assert!(ProductionDefaults::PRESSURE_FACTOR_MODERATE > ProductionDefaults::PRESSURE_FACTOR_HIGH);
-        assert!(ProductionDefaults::PRESSURE_FACTOR_HIGH > ProductionDefaults::PRESSURE_FACTOR_CRITICAL);
+    fn test_processing_constants() {
+        use super::processing::*;
+        
+        // Verify constants are reasonable
+        assert_eq!(LARGE_OFFSET_THRESHOLD, 10_000);
+        assert_eq!(CHUNKED_WITH_OFFSET_FILE_SIZE, 100 * 1024 * 1024);
+        assert_eq!(ALWAYS_CHUNKED_FILE_SIZE, 1024 * 1024 * 1024);
+        assert_eq!(ADAPTATION_INTERVAL, 20);
     }
-    */
+
+    #[test]
+    fn test_io_constants() {
+        use super::io::*;
+        
+        // Verify reasonable defaults
+        assert_eq!(TAIL_FLUSH_INTERVAL.as_millis(), 250);
+        assert_eq!(FLUSH_LINE_COUNT, 40);
+        assert_eq!(READ_BUFFER_SIZE, 8192);
+        assert_eq!(INITIAL_CHUNK_SIZE, 32 * 1024);
+    }
 }

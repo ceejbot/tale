@@ -144,7 +144,7 @@ pub use runtime::{config, set};
 pub use runtime::{update, with_config};
 
 use crate::errors::TaleError;
-use crate::production_defaults::{ProductionDefaults, get_production_config};
+use crate::defaults::{SystemDefaults, get_system_config};
 use crate::readers::{AdaptiveStrategy, ConservativeStrategy, StaticStrategy, Strategy};
 
 // Public convenience accessors - these work with both implementations
@@ -262,7 +262,7 @@ fn handle_possible_paths(args: &[String]) -> Vec<PathBuf> {
 impl ConfigOpts {
     pub fn new(args: &crate::Args) -> Self {
         // Get production defaults
-        let prod_config = get_production_config();
+        let system_config = get_system_config();
         let (mode, maybe_offset) = match args.args.len() {
             0 => (InputMode::Stdin, None),
             1 => {
@@ -331,22 +331,22 @@ impl ConfigOpts {
         // Apply production defaults
         let max_memory = args.max_memory.unwrap_or_else(|| {
             // Use production default memory budget
-            let system_percentage = prod_config.memory_percentage;
+            let system_percentage = system_config.memory_percentage;
             if let Some(memory_stats) = memory_stats::memory_stats() {
                 let system_memory = memory_stats.physical_mem;
                 let calculated = (system_memory as f64 * system_percentage / 100.0) as usize;
                 calculated.clamp(
-                    ProductionDefaults::MIN_MEMORY_BUDGET,
-                    ProductionDefaults::MAX_MEMORY_BUDGET,
+                    SystemDefaults::MIN_MEMORY_BUDGET,
+                    SystemDefaults::MAX_MEMORY_BUDGET,
                 )
             } else {
                 // Fallback to reasonable default
-                prod_config.max_memory_mb * 1024 * 1024
+                system_config.max_memory_mb * 1024 * 1024
             }
         });
 
         // Use specified strategy or production default
-        let strategy = args.chunk_strategy.clone().or_else(|| match prod_config.strategy {
+        let strategy = args.chunk_strategy.clone().or_else(|| match system_config.strategy {
             "static" => Some(Strategy::Static(StaticStrategy::default())),
             "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
             "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
@@ -360,7 +360,7 @@ impl ConfigOpts {
             false
         } else {
             // Use production default based on preset
-            prod_config.force_chunked
+            system_config.force_chunked
         };
 
         Self {

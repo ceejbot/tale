@@ -11,7 +11,7 @@ use logpatterns::*;
 
 pub mod batch;
 pub mod config;
-pub mod constants;
+pub mod defaults;
 pub mod errors;
 pub mod file_state;
 pub mod json_profiler;
@@ -19,7 +19,6 @@ pub mod logpatterns;
 pub mod memory_budget;
 pub mod metrics;
 pub mod multiplexed;
-pub mod production_defaults;
 pub mod readers;
 pub mod watcher;
 

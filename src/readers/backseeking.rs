@@ -11,7 +11,7 @@ use bytes::BytesMut;
 use miette::{ErrReport, Result, WrapErr};
 
 use super::FileProcessor;
-use crate::constants::*;
+use crate::defaults::{io::*, processing::*};
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 

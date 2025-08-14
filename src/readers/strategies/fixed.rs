@@ -3,7 +3,7 @@
 //! single-file reading.
 
 use super::IsStrategy;
-use crate::constants::READ_BUFFER_SIZE;
+use crate::defaults::io::READ_BUFFER_SIZE;
 use crate::metrics::ChunkMetrics;
 
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ impl StaticStrategy {
 impl Default for StaticStrategy {
     fn default() -> Self {
         // Use production default chunk size
-        let default_size = crate::production_defaults::ProductionDefaults::DEFAULT_CHUNK_SIZE;
+        let default_size = crate::defaults::SystemDefaults::DEFAULT_CHUNK_SIZE;
         let aligned_size = align_to_block_size(default_size, get_optimal_block_size());
         Self {
             chunk_size: aligned_size,
@@ -112,7 +112,7 @@ pub fn get_optimal_block_size() -> usize {
 /// Determine optimal chunk size based on file characteristics
 pub fn optimal_chunk_size(file_size: u64, _available_memory: Option<usize>) -> usize {
     // Use production defaults for optimal chunk sizing
-    crate::production_defaults::ProductionDefaults::optimal_chunk_for_file(file_size)
+    crate::defaults::SystemDefaults::optimal_chunk_for_file(file_size)
 }
 
 #[cfg(test)]

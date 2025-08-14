@@ -223,8 +223,8 @@ impl ChunkedFileReader {
             return Ok(None);
         }
 
-        // Let strategy adapt if needed (every 20 chunks)
-        if self.metrics.chunks_seen % 20 == 0 && self.strategy.should_adapt(&self.metrics) {
+        // Let strategy adapt if needed
+        if self.metrics.chunks_seen % crate::defaults::processing::ADAPTATION_INTERVAL == 0 && self.strategy.should_adapt(&self.metrics) {
             let current_size = self.strategy.initial_chunk_size();
             self.strategy.adapt_size(&self.metrics, current_size);
         }
