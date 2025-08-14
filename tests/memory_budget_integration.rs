@@ -55,14 +55,14 @@ fn test_emergency_allocation() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(2048)?; // 2KB limit
 
     // Test that emergency allocation works
-    let alloc1 = budget.try_allocate(1800, "reader1")?; // Use most of budget
+    let alloc1 = budget.try_allocate(1950, "reader1")?; // Use 95.2% of budget (critical pressure)
     assert!(alloc1.is_some());
 
     // This should fail with normal allocation
-    let alloc2 = budget.try_allocate(1000, "reader2")?;
+    let alloc2 = budget.try_allocate(100, "reader2")?;
     assert!(alloc2.is_none());
 
-    // Verify we're in critical pressure
+    // Verify we're in critical pressure (>95%)
     assert_eq!(budget.current_pressure()?, MemoryPressure::Critical);
 
     Ok(())

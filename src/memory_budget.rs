@@ -201,12 +201,13 @@ impl MemoryBudgetInner {
     }
 
     fn current_pressure(&self) -> MemoryPressure {
+        use crate::defaults::SystemDefaults;
         let usage_ratio = self.current_usage as f64 / self.total_limit as f64;
 
         match usage_ratio {
-            r if r < 0.60 => MemoryPressure::Low,
-            r if r < 0.85 => MemoryPressure::Moderate,
-            r if r < 0.95 => MemoryPressure::High,
+            r if r < SystemDefaults::MEMORY_PRESSURE_LOW_THRESHOLD => MemoryPressure::Low,
+            r if r < SystemDefaults::MEMORY_PRESSURE_MODERATE_THRESHOLD => MemoryPressure::Moderate,
+            r if r < SystemDefaults::MEMORY_PRESSURE_HIGH_THRESHOLD => MemoryPressure::High,
             _ => MemoryPressure::Critical,
         }
     }
