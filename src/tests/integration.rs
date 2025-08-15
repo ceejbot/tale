@@ -3,7 +3,7 @@ use std::time::Instant;
 use crate::readers::{AdaptiveStrategy, ChunkedFileReader, FileProcessor, StaticStrategy, Strategy};
 
 #[test]
-fn test_with_real_log_file() {
+fn use_real_log_file() {
     let temp_file = super::create_large_test_file(1_000_000); // 1M lines
 
     // Time the adaptive version
@@ -40,7 +40,7 @@ fn test_with_real_log_file() {
 }
 
 #[test]
-fn test_throughput_improves() {
+fn throughput_improves() {
     let temp_file = super::create_large_test_file(1_000_000); // 1M lines
 
     // Measure with adaptive

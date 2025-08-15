@@ -300,7 +300,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_edit_distance() {
+    fn edit_distance_calc_works() {
         assert_eq!(edit_distance("hello", "hello"), 0);
         assert_eq!(edit_distance("hello", "helo"), 1);
         assert_eq!(edit_distance("hello", "help"), 2);

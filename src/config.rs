@@ -143,8 +143,8 @@ pub use runtime::{config, set};
 #[cfg(test)]
 pub use runtime::{update, with_config};
 
-use crate::errors::TaleError;
 use crate::defaults::{SystemDefaults, get_system_config};
+use crate::errors::TaleError;
 use crate::readers::{AdaptiveStrategy, ConservativeStrategy, StaticStrategy, Strategy};
 
 // Public convenience accessors - these work with both implementations
@@ -335,10 +335,7 @@ impl ConfigOpts {
             if let Some(memory_stats) = memory_stats::memory_stats() {
                 let system_memory = memory_stats.physical_mem;
                 let calculated = (system_memory as f64 * system_percentage / 100.0) as usize;
-                calculated.clamp(
-                    SystemDefaults::MIN_MEMORY_BUDGET,
-                    SystemDefaults::MAX_MEMORY_BUDGET,
-                )
+                calculated.clamp(SystemDefaults::MIN_MEMORY_BUDGET, SystemDefaults::MAX_MEMORY_BUDGET)
             } else {
                 // Fallback to reasonable default
                 system_config.max_memory_mb * 1024 * 1024
@@ -440,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_modification() {
+    fn can_modify_config() {
         let initial_config = ConfigOpts {
             tailing: false,
             sticky: false,
@@ -471,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_config() {
+    fn can_test_with_config() {
         let original_config = ConfigOpts::default();
         set(original_config.clone()).expect("should set config");
 
@@ -511,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_access() {
+    fn concurrent_access_to_test_config() {
         use std::thread;
         use std::time::Duration;
 
@@ -550,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_accessors() {
+    fn config_accessors_work() {
         let test_config = ConfigOpts {
             tailing: true,
             sticky: true,

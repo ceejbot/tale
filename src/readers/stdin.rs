@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use bytes::BytesMut;
 use miette::WrapErr;
 
-use crate::defaults::{io::*, memory::*, processing::BLOCK_SIZE};
+use crate::defaults::io::*;
+use crate::defaults::memory::*;
+use crate::defaults::processing::BLOCK_SIZE;
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 

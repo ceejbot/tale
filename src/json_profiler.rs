@@ -192,7 +192,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_variant_counting() {
+    fn can_count_variants() {
         reset_counters();
 
         // This would require creating actual Printable instances

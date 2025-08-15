@@ -11,7 +11,8 @@ use bytes::BytesMut;
 use miette::{ErrReport, Result, WrapErr};
 
 use super::FileProcessor;
-use crate::defaults::{io::*, processing::*};
+use crate::defaults::io::*;
+use crate::defaults::processing::*;
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
@@ -374,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circular_buffer_byte_logic() {
+    fn good_circular_buffer_byte_logic() {
         // Test the circular buffer logic without stdin dependency
         let input_data = b"0123456789abcdefghij";
         let buffer_size = 10;
@@ -402,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circular_buffer_partial_fill() {
+    fn circular_buffer_partial_fill_works() {
         // Test circular buffer when input is smaller than buffer
         let input_data = b"hello";
         let buffer_size = 10;
@@ -442,8 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn test_overshoot_handling_logic() {
-        // Test the overshoot parsing logic
+    fn handles_overshoots_correctly() {
         let overshoot = b"partial line\ncomplete line\nanother";
         let overshoot_str = String::from_utf8_lossy(overshoot);
         let mut remaining = overshoot_str.as_ref();

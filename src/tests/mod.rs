@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 mod adaptation;
+mod budget;
 mod integration;
 mod simulation;
 

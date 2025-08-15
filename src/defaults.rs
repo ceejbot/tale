@@ -2,7 +2,8 @@
 //!
 //! This module provides all configuration constants, system defaults, and
 //! preset configurations for the Tale log processing tool. It consolidates
-//! what were previously separate constants.rs and production_defaults.rs modules.
+//! what were previously separate constants.rs and production_defaults.rs
+//! modules.
 
 use std::time::Duration;
 
@@ -31,7 +32,8 @@ pub mod io {
 
 /// File processing thresholds and decision constants
 pub mod processing {
-    /// Large offset threshold - offsets above this suggest large file operations
+    /// Large offset threshold - offsets above this suggest large file
+    /// operations
     pub const LARGE_OFFSET_THRESHOLD: u64 = 10_000;
 
     /// File size requiring chunked processing when combined with large offset
@@ -286,8 +288,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_optimal_chunk_sizes() {
-        // Test that chunk sizes are block-aligned
+    fn chunk_sizes_are_block_aligned() {
         const BLOCK_SIZE: usize = 4096;
 
         let tiny = SystemDefaults::optimal_chunk_for_file(50_000);
@@ -312,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunking_decision() {
+    fn chunking_decisions_are_good() {
         // Should not chunk tiny files
         assert!(!SystemDefaults::should_chunk_by_default(100_000));
 
@@ -321,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn test_preset_settings() {
+    fn presets_are_as_expected() {
         let low_mem = ConfigPreset::LowMemory.settings();
         assert_eq!(low_mem.memory_percentage, 5.0);
         assert_eq!(low_mem.strategy, "conservative");
@@ -339,9 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn test_processing_constants() {
+    fn we_have_processing_constants() {
         use super::processing::*;
-        
+
         // Verify constants are reasonable
         assert_eq!(LARGE_OFFSET_THRESHOLD, 10_000);
         assert_eq!(CHUNKED_WITH_OFFSET_FILE_SIZE, 100 * 1024 * 1024);
@@ -350,9 +351,9 @@ mod tests {
     }
 
     #[test]
-    fn test_io_constants() {
+    fn we_have_io_constants() {
         use super::io::*;
-        
+
         // Verify reasonable defaults
         assert_eq!(TAIL_FLUSH_INTERVAL.as_millis(), 250);
         assert_eq!(FLUSH_LINE_COUNT, 40);

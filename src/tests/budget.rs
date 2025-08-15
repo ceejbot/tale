@@ -95,7 +95,7 @@ fn test_recommended_chunk_size_adaptation() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn test_memory_stats_reporting() -> Result<(), Box<dyn std::error::Error>> {
+fn can_report_memory_stats() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(10000)?;
 
     let _alloc1 = budget.try_allocate(3000, "reader1")?;

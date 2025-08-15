@@ -224,7 +224,9 @@ impl ChunkedFileReader {
         }
 
         // Let strategy adapt if needed
-        if self.metrics.chunks_seen % crate::defaults::processing::ADAPTATION_INTERVAL == 0 && self.strategy.should_adapt(&self.metrics) {
+        if self.metrics.chunks_seen % crate::defaults::processing::ADAPTATION_INTERVAL == 0
+            && self.strategy.should_adapt(&self.metrics)
+        {
             let current_size = self.strategy.initial_chunk_size();
             self.strategy.adapt_size(&self.metrics, current_size);
         }
@@ -292,7 +294,7 @@ impl ChunkedFileReader {
 
         // Track how much pending data we have at the start
         let pending_len = self.pending_data.len();
-        
+
         let mut buffer = vec![0u8; chunk_size];
         let bytes_read = if self.is_at_end() {
             // At EOF, just process any pending data
@@ -302,13 +304,13 @@ impl ChunkedFileReader {
             let start = std::time::Instant::now();
             let read = self.file.read(&mut buffer).map_err(TaleError::from)?;
             let read_duration = start.elapsed();
-            
-            // Record read metrics  
+
+            // Record read metrics
             if read > 0 {
                 let line_count = buffer[..read].iter().filter(|&&b| b == b'\n').count();
                 self.metrics.record_chunk_processing(read, read_duration, line_count);
             }
-            
+
             read
         };
 
@@ -411,8 +413,10 @@ impl FileProcessor for ChunkedFileReader {
                             let position_after_newline = i + 1;
                             if position_after_newline < chunk.data.len() {
                                 self.pending_data = chunk.data[position_after_newline..].to_vec();
-                                // Note: We don't adjust current_position here because read_chunk
-                                // already handles the position tracking correctly with pending_data
+                                // Note: We don't adjust current_position here
+                                // because read_chunk
+                                // already handles the position tracking
+                                // correctly with pending_data
                             }
                             return Ok(());
                         }
@@ -421,9 +425,9 @@ impl FileProcessor for ChunkedFileReader {
 
                 // Entire chunk was consumed
                 lines_skipped += lines_in_chunk;
-                
-                // If this chunk didn't end with a newline and we haven't skipped enough lines yet,
-                // we need to keep any partial line for the next iteration
+
+                // If this chunk didn't end with a newline and we haven't skipped enough lines
+                // yet, we need to keep any partial line for the next iteration
                 if !chunk.ends_at_line_boundary && lines_skipped < count {
                     if let Some(last_nl) = last_newline_pos {
                         // Keep everything after the last newline as pending data

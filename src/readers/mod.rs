@@ -45,7 +45,8 @@ use miette::ErrReport;
 pub use stdin::*;
 pub use strategies::*;
 
-use crate::defaults::{io::*, processing::*};
+use crate::defaults::io::*;
+use crate::defaults::processing::*;
 use crate::errors::{FileError, TaleError, find_similar_files};
 use crate::{config, process_line};
 
@@ -156,9 +157,9 @@ pub fn create_file_processor<P: AsRef<Path>>(
 
     // Pick which processor suits the situation based on file size and offset
     let use_chunked = !config::disable_chunked()
-        && (config::force_chunked() ||
-        (file_size > CHUNKED_WITH_OFFSET_FILE_SIZE && large_offset) ||
-        file_size > ALWAYS_CHUNKED_FILE_SIZE);
+        && (config::force_chunked()
+            || (file_size > CHUNKED_WITH_OFFSET_FILE_SIZE && large_offset)
+            || file_size > ALWAYS_CHUNKED_FILE_SIZE);
 
     // This is the only reader that can handle negative block and byte offsets, and
     // it already handles them reasonably (though its chunks might not be
@@ -451,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunked_file_reader_small_file() -> Result<(), TaleError> {
+    fn can_chunkread_small_files() -> Result<(), TaleError> {
         let test_data = "line1\nline2\nline3\n";
         let temp_file = create_test_file(test_data);
 
