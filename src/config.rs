@@ -81,7 +81,7 @@ mod runtime {
 
     // Test implementation uses thread-local storage for isolation
     thread_local! {
-        pub static TEST_CONFIG: RefCell<Option<ConfigOpts>> = RefCell::new(None);
+        pub static TEST_CONFIG: RefCell<Option<ConfigOpts>> = const { RefCell::new(None) };
     }
 
     /// Get configuration - returns owned value from thread-local storage
@@ -90,7 +90,7 @@ mod runtime {
     }
 
     /// Set configuration - can be called multiple times per thread
-    pub fn set(input: ConfigOpts) -> Result<(), ConfigOpts> {
+    pub fn set(input: ConfigOpts) -> Result<(), Box<ConfigOpts>> {
         TEST_CONFIG.with(|cfg| {
             *cfg.borrow_mut() = Some(input);
         });
