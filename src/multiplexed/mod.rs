@@ -67,7 +67,7 @@ pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
 
 /// Handle multi-file tailing mode (watch for changes and follow)
 pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
-    use batch::{BatchConfig, BatchedLine, create_processor_with_config};
+    use batch::{BatchConfig, BatchedLine, batched_with_config};
     use watcher::{WatchEvent, create_watcher};
 
     // Create the file watcher
@@ -80,9 +80,9 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
     let batch_config = BatchConfig {
         batch_window: Duration::from_millis(config::batch_window_ms()),
         max_batch_size: 1000,
-        max_buffer_memory: 10 * 1024 * 1024,
+        _max_buffer_memory: 10 * 1024 * 1024,
     };
-    let mut batch_processor = create_processor_with_config(batch_config);
+    let mut batch_processor = batched_with_config(batch_config);
 
     // Start the batch processor
     let (line_sender, mut batch_receiver) = batch_processor.start().await?;

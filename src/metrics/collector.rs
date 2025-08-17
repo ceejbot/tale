@@ -264,7 +264,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_metrics_collector_integration() {
+    fn metrics_collectors_work() {
         let mut collector = MetricsCollector::new();
 
         // Record some chunks

@@ -19,6 +19,9 @@ pub mod metrics;
 pub mod multiplexed;
 pub mod readers;
 
+#[cfg(test)]
+mod tests;
+
 // Re-export commonly used types for convenience
 use clap::Parser;
 use clap::builder::Styles;

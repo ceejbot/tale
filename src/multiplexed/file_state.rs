@@ -185,7 +185,8 @@ impl FileStateManager {
         Ok(())
     }
 
-    /// Add a file to be tracked, starting from the end. No offsets for MULTIBALL.
+    /// Add a file to be tracked, starting from the end. No offsets for
+    /// MULTIBALL.
     pub fn add_file_for_tailing<P: AsRef<Path>>(&mut self, path: P) -> Result<(), TaleError> {
         let path = path.as_ref().to_path_buf();
         let mut state = FileState::new_and_refresh(path.clone())?;

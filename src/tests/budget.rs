@@ -1,9 +1,9 @@
 //! Integration tests for memory budget management
 
-use tale::memory_budget::{MemoryBudget, MemoryPressure};
+use crate::memory_budget::{MemoryBudget, MemoryPressure};
 
 #[test]
-fn test_memory_budget_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
+fn memory_budget_basic_features_work() -> Result<(), Box<dyn std::error::Error>> {
     // Create a test budget with 10KB limit
     let budget = MemoryBudget::new(10 * 1024)?;
 
@@ -50,7 +50,7 @@ fn test_memory_pressure_levels() -> Result<(), Box<dyn std::error::Error>> {
 // This is handled by the unit tests in the memory_budget module instead
 
 #[test]
-fn test_emergency_allocation() -> Result<(), Box<dyn std::error::Error>> {
+fn can_do_emergency_allocation() -> Result<(), Box<dyn std::error::Error>> {
     // Create a very small budget to trigger emergency allocation
     let budget = MemoryBudget::new(2048)?; // 2KB limit
 

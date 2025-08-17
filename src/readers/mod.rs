@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunked_skip_lines() -> Result<(), TaleError> {
+    fn can_skip_chunked_lines() -> Result<(), TaleError> {
         // Create test data with more lines to test chunk boundaries
         let test_data = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n";
         let temp_file = create_test_file(test_data);
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chunked_skip_lines_partial_chunk() -> Result<(), TaleError> {
+    fn chunked_skip_lines_partial_chunk() -> Result<(), TaleError> {
         // Test case where skip_lines needs to stop in the middle of a chunk
         let test_data = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n";
         let temp_file = create_test_file(test_data);

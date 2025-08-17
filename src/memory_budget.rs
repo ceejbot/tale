@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_pressure_calculation() -> Result<(), TaleError> {
+    fn memory_pressure_calculation_works() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
 
         // Low pressure (< 60%)
@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recommended_chunk_size() -> Result<(), TaleError> {
+    fn can_recommend_chunk_size() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
 
         // Low pressure - no reduction
@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allocation_automatic_cleanup() -> Result<(), TaleError> {
+    fn allocation_automatic_cleanup_works() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
 
         {

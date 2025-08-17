@@ -120,7 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_block_alignment() {
+    fn aligned_to_blocks() {
         let block_size = 4096;
 
         // Test exact alignment
@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn test_optimal_chunk_sizes_are_aligned() {
+    fn optimal_chunk_sizes_are_aligned() {
         let block_size = get_optimal_block_size();
 
         // Test different file sizes

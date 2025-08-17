@@ -15,19 +15,19 @@ fn use_real_log_file() {
             line_count += 1;
             Ok(())
         })
-        .unwrap();
+        .expect("process_lines should succeed");
     let adaptive_time = start.elapsed();
 
     // Measure with static
     let start = Instant::now();
-    let mut reader = ChunkedFileReader::static_optimal(&temp_file).unwrap();
+    let mut reader = ChunkedFileReader::static_optimal(&temp_file).expect("test fixture should exist");
     let mut static_line_count = 0;
     reader
         .process_lines(|_| {
             static_line_count += 1;
             Ok(())
         })
-        .unwrap();
+        .expect("process_lines should succeed");
     let static_time = start.elapsed();
 
     assert_eq!(line_count, static_line_count);

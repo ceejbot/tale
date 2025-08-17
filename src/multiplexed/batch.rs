@@ -24,13 +24,13 @@ pub struct BatchedLine {
     /// The parsed JSON value (if parseable)
     pub parsed_json: Option<serde_json::Value>,
     /// The source file path
-    pub source_file: PathBuf,
+    pub _source_file: PathBuf,
     /// Timestamp extracted from the line (if any)
     pub timestamp: Option<Timestamp>,
     /// When this line was received (fallback for sorting)
     pub received_at: Instant,
     /// Line number within the source file
-    pub line_number: u64,
+    pub _line_number: u64,
 }
 
 impl BatchedLine {
@@ -39,10 +39,10 @@ impl BatchedLine {
         Self {
             content,
             parsed_json: None,
-            source_file,
+            _source_file: source_file,
             timestamp: None,
             received_at: Instant::now(),
-            line_number,
+            _line_number: line_number,
         }
     }
 
@@ -151,7 +151,7 @@ pub struct BatchConfig {
     /// Maximum number of lines to hold in a batch
     pub max_batch_size: usize,
     /// Maximum memory usage for buffering (approximate)
-    pub max_buffer_memory: usize,
+    pub _max_buffer_memory: usize,
 }
 
 impl Default for BatchConfig {
@@ -159,7 +159,7 @@ impl Default for BatchConfig {
         Self {
             batch_window: Duration::from_millis(250),
             max_batch_size: 200,
-            max_buffer_memory: 2 * 1024 * 1024, // 2MB
+            _max_buffer_memory: 2 * 1024 * 1024, // 2MB
         }
     }
 }
@@ -308,12 +308,7 @@ impl BatchProcessor {
     }
 }
 
-/// Create a new batch processor with default configuration
-pub fn create_processor() -> BatchProcessor {
-    BatchProcessor::new(BatchConfig::default())
-}
-
 /// Create a new batch processor with custom configuration
-pub fn create_processor_with_config(config: BatchConfig) -> BatchProcessor {
+pub fn batched_with_config(config: BatchConfig) -> BatchProcessor {
     BatchProcessor::new(config)
 }

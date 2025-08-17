@@ -19,14 +19,14 @@ Pre-release Testing notes
   - Windows (future - via WSL initially?)
 */
 
-pub trait IoSimulator {
+pub trait _IoSimulator {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
     fn add_latency(&mut self, ms: u64);
     fn throttle_bandwidth(&mut self, bytes_per_sec: usize);
 }
 
 #[derive(Debug, Clone)]
-pub struct StressedIoSimulator {
+pub struct _StressedIoSimulator {
     data: Vec<u8>,
     position: usize,
     latency_ms: u64,
@@ -58,11 +58,11 @@ pub mod mock_mem_impl {
     }
 
     pub fn set_mock_memory_mb(mb: usize) {
-        *MOCK_MEMORY.lock().unwrap() = Some(mb);
+        *MOCK_MEMORY.lock().expect("mock memory poisoned: set") = Some(mb);
     }
 
     pub fn _get_memory_mb() -> usize {
-        MOCK_MEMORY.lock().unwrap().unwrap_or(100)
+        MOCK_MEMORY.lock().expect("mock memory poisoned: get").unwrap_or(100)
     }
 }
 
