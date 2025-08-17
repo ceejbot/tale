@@ -218,21 +218,57 @@ pub fn mode() -> InputMode {
     return config().mode;
 }
 
-// Implementation details - these don't need to be split per runtime
+/// Unescape shell-escaped glob patterns (e.g., \* -> *, \? -> ?, \[ -> [)
+fn unescape_glob_pattern(pattern: &str) -> String {
+    let mut result = String::new();
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            // Check if next character is a glob metacharacter
+            if let Some(&next_ch) = chars.peek() {
+                if matches!(next_ch, '*' | '?' | '[' | ']' | '{' | '}') {
+                    // Skip the backslash and add the escaped character
+                    chars.next();
+                    result.push(next_ch);
+                } else {
+                    // Not escaping a glob metacharacter, keep the backslash
+                    result.push(ch);
+                }
+            } else {
+                // Backslash at end of string
+                result.push(ch);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+/// Check if a string contains glob patterns, including shell-escaped ones
 fn is_glob(maybe: &str) -> bool {
-    maybe.contains('?') || maybe.contains('*') || maybe.contains('[')
+    // Check for unescaped glob patterns, for users who turn on noglob.
+    if maybe.contains('?') || maybe.contains('*') || maybe.contains('[') || maybe.contains('{') {
+        return true;
+    }
+
+    // Check for shell-escaped glob patterns
+    maybe.contains("\\*") || maybe.contains("\\?") || maybe.contains("\\[") || maybe.contains("\\{")
 }
 
 /// Amongst our list of files to tail we might have a glob pattern
 /// to expand. If so, we find matches. Otherwise, we add that path
-/// to our list directly. However, for most people their shells will
-/// already have expanded globs, so this feature feels marginal.
+/// to our list directly.
 fn expand_globs(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
     let mut all_paths = Vec::new();
 
     for candidate in args {
         if is_glob(candidate.as_str()) {
-            let pattern = glob::glob(candidate)?;
+            // Unescape shell-escaped glob patterns before expansion
+            let unescaped_pattern = unescape_glob_pattern(candidate);
+            let pattern = glob::glob(&unescaped_pattern)?;
             for fpath in pattern.flatten() {
                 if fpath.is_file() {
                     all_paths.push(fpath);
@@ -249,18 +285,33 @@ fn expand_globs(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
     Ok(all_paths)
 }
 
-fn handle_possible_paths(args: &[String]) -> Vec<PathBuf> {
-    if let Ok(paths) = expand_globs(args) {
-        return paths;
+fn handle_possible_paths(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
+    match expand_globs(args) {
+        Ok(paths) => {
+            if paths.is_empty() {
+                // No files matched the glob pattern(s)
+                let patterns: Vec<String> = args.iter().map(|s| format!("'{}'", s)).collect();
+                Err(TaleError::from(Box::new(crate::errors::FileError::NotFound {
+                    path: PathBuf::from(patterns.join(", ")),
+                    similar_files: vec![
+                        "Check if the glob pattern is correct".to_string(),
+                        "Verify the files exist in the specified directory".to_string(),
+                        "Try using an absolute path".to_string(),
+                    ],
+                })))
+            } else {
+                Ok(paths)
+            }
+        }
+        Err(e) => {
+            // Glob expansion failed - could be invalid pattern or I/O error
+            Err(e)
+        }
     }
-    // we only get here if none of the paths exist.
-    // TODO we should respond with an error with a good message.
-
-    todo!()
 }
 
 impl ConfigOpts {
-    pub fn new(args: &crate::Args) -> Self {
+    pub fn new(args: &crate::Args) -> Result<Self, TaleError> {
         // Get production defaults
         let system_config = get_system_config();
         let (mode, maybe_offset) = match args.args.len() {
@@ -277,7 +328,7 @@ impl ConfigOpts {
                     // It's a filename or a glob
                     if is_glob(only) {
                         // It's a glob pattern, handle as multi-file
-                        let paths = handle_possible_paths(vec![only.clone()].as_slice());
+                        let paths = handle_possible_paths(vec![only.clone()].as_slice())?;
                         (InputMode::MultiFile { paths }, None)
                     } else {
                         // It's a single filename (may or may not exist) - always treat as SingleFile
@@ -304,14 +355,14 @@ impl ConfigOpts {
                     )
                 } else {
                     // Two file paths or globs: we're multifile for sure.
-                    let paths = handle_possible_paths(args.args.as_slice());
+                    let paths = handle_possible_paths(args.args.as_slice())?;
                     (InputMode::MultiFile { paths }, None)
                 }
             }
             _ => {
                 // More than two paths and/or globs.
                 // We still want to know if the first arg is an offset.
-                let paths = handle_possible_paths(args.args.as_slice());
+                let paths = handle_possible_paths(args.args.as_slice())?;
                 (InputMode::MultiFile { paths }, None)
             }
         };
@@ -360,7 +411,7 @@ impl ConfigOpts {
             system_config.force_chunked
         };
 
-        Self {
+        Ok(Self {
             tailing: args.follow || args.sticky,
             sticky: args.sticky,
             offset,
@@ -381,7 +432,7 @@ impl ConfigOpts {
             conservative: false,
             #[cfg(debug_assertions)]
             profile_json: args.profile_json,
-        }
+        })
     }
 }
 
@@ -411,7 +462,7 @@ mod tests {
             #[cfg(debug_assertions)]
             profile_json: false,
         };
-        let config = ConfigOpts::new(&args);
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert_eq!(config.offset, -5);
         assert!(matches!(config.mode, InputMode::Stdin));
     }
@@ -434,6 +485,69 @@ mod tests {
                 PathBuf::from("fixtures/windows_line_endings.log")
             ]
         );
+    }
+
+    #[test]
+    fn can_unescape_glob_pattern() {
+        // Test basic unescaping
+        assert_eq!(unescape_glob_pattern("\\*.log"), "*.log");
+        assert_eq!(unescape_glob_pattern("test\\?.txt"), "test?.txt");
+        assert_eq!(unescape_glob_pattern("\\[abc\\]"), "[abc]");
+
+        // Test mixed patterns
+        assert_eq!(unescape_glob_pattern("\\*.log\\?"), "*.log?");
+        assert_eq!(unescape_glob_pattern("test\\*file\\?.log"), "test*file?.log");
+
+        // Test non-glob backslashes (should be preserved)
+        assert_eq!(unescape_glob_pattern("file\\name.txt"), "file\\name.txt");
+        assert_eq!(unescape_glob_pattern("path\\to\\file"), "path\\to\\file");
+
+        // Test already unescaped patterns (should be unchanged)
+        assert_eq!(unescape_glob_pattern("*.log"), "*.log");
+        assert_eq!(unescape_glob_pattern("test?.txt"), "test?.txt");
+
+        // Test empty and edge cases
+        assert_eq!(unescape_glob_pattern(""), "");
+        assert_eq!(unescape_glob_pattern("\\"), "\\");
+        assert_eq!(unescape_glob_pattern("file\\"), "file\\");
+    }
+
+    #[test]
+    fn is_glob_with_escaped_patterns_works() {
+        // Test escaped glob patterns
+        assert!(is_glob("\\*.log"));
+        assert!(is_glob("test\\?.txt"));
+        assert!(is_glob("\\[abc]"));
+
+        // Test unescaped glob patterns (existing functionality)
+        assert!(is_glob("*.log"));
+        assert!(is_glob("test?.txt"));
+        assert!(is_glob("[abc]"));
+
+        // Test non-glob patterns
+        assert!(!is_glob("file.log"));
+        assert!(!is_glob("test.txt"));
+        assert!(!is_glob("path/to/file"));
+
+        // Test backslashes that don't escape glob chars
+        assert!(!is_glob("file\\name.txt"));
+        assert!(!is_glob("path\\to\\file"));
+    }
+
+    #[test]
+    fn can_expand_escaped_globs() {
+        // This test requires the fixtures directory to exist
+        // Test that escaped glob patterns work the same as unescaped ones
+        let escaped_fixture_glob = ".\\*/fixtures/\\*.log".to_string();
+        let normal_fixture_glob = "./fixtures/*.log".to_string();
+
+        // Both should expand to the same files (if fixtures exist)
+        if let (Ok(escaped_results), Ok(normal_results)) = (
+            expand_globs(&[escaped_fixture_glob]),
+            expand_globs(&[normal_fixture_glob]),
+        ) {
+            assert_eq!(escaped_results, normal_results);
+        }
     }
 
     #[test]
