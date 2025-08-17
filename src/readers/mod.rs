@@ -170,7 +170,7 @@ pub async fn handle_file(fpath: &Path) -> Result<()> {
     // BackSeekingProcessor handles its own special cases (negative offsets, bytes,
     // blocks)
     if let FileProcessorType::BackSeeking(mut backseeker) = processor {
-        return backseeker.tail().map_err(|e| e.into());
+        return backseeker.tail();
     }
 
     // For buffered and chunked processors, handle offset scenarios
@@ -189,7 +189,7 @@ pub async fn handle_file(fpath: &Path) -> Result<()> {
 
             processor.process_lines(|line| {
                 process_line(line, &mut buffer, &mut outlock)
-                    .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+                    .map_err(|e| TaleError::from(std::io::Error::other(e.to_string())))
             })?;
 
             outlock.flush().into_diagnostic()?;
@@ -202,7 +202,7 @@ pub async fn handle_file(fpath: &Path) -> Result<()> {
 
             processor.process_lines(|line| {
                 process_line(line, &mut buffer, &mut outlock)
-                    .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+                    .map_err(|e| TaleError::from(std::io::Error::other(e.to_string())))
             })?;
 
             outlock.flush().into_diagnostic()?;

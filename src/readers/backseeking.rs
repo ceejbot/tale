@@ -220,7 +220,7 @@ impl<'a> BackSeekingProcessor<'a> {
     /// Process a single line through the formatting pipeline
     pub fn process_line(&mut self, line: &str) -> Result<(), TaleError> {
         process_line(line, &mut self.buffer, &mut self.outlock)
-            .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| TaleError::from(std::io::Error::other(e.to_string())))?;
         self.count += 1;
         self.flush_if_needed()
     }
@@ -248,7 +248,7 @@ impl<'a> BackSeekingProcessor<'a> {
 
         let file = self
             .move_to_position(offset, offset_unit, tailing)
-            .map_err(|e| miette::Report::from(e))?;
+            .map_err(miette::Report::from)?;
         let mut reader = BufReader::new(file);
 
         // If we've got a positive line offset, we still need to skip our N lines
@@ -262,10 +262,10 @@ impl<'a> BackSeekingProcessor<'a> {
         let mut line = String::with_capacity(LINE_CAPACITY);
         while reader.read_line(&mut line).into_diagnostic()? != 0 {
             strip_line_ending(&mut line);
-            self.process_line(line.as_str()).map_err(|e| miette::Report::from(e))?;
+            self.process_line(line.as_str()).map_err(miette::Report::from)?;
             line.clear();
         }
-        self.flush().map_err(|e| miette::Report::from(e))?;
+        self.flush().map_err(miette::Report::from)?;
 
         if !tailing {
             return Ok(());

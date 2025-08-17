@@ -196,7 +196,7 @@ impl ChunkedFileReader {
 
     /// Create a ChunkedFileReader with optimal configuration for the file
     pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
-        Ok(Self::static_optimal(path)?)
+        Self::static_optimal(path)
     }
 
     /// Get the file size
@@ -276,17 +276,15 @@ impl ChunkedFileReader {
                         } else {
                             return Err(TaleError::MemoryError(
                                 "Cannot allocate memory even for emergency chunk size".to_string(),
-                            )
-                            .into());
+                            ));
                         }
                     } else {
                         return Err(TaleError::MemoryError(
                             "Out of memory - chunk size would be too small".to_string(),
-                        )
-                        .into());
+                        ));
                     }
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
 

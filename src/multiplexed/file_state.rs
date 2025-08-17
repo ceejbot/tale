@@ -46,7 +46,7 @@ impl FileState {
         let mut state = Self::new(path);
         state
             .refresh()
-            .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| TaleError::from(std::io::Error::other(e.to_string())))?;
         Ok(state)
     }
 
