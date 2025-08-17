@@ -128,7 +128,7 @@ pub struct ReaderMemoryStats {
 struct MemoryBudgetInner {
     /// Maximum total memory allowed (in bytes)
     total_limit: usize,
-    /// Currently allocated memory (in bytes)  
+    /// Currently allocated memory (in bytes)
     current_usage: usize,
     /// Peak memory usage seen
     peak_usage: usize,
@@ -365,7 +365,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_memory_pressure_levels() {
+    fn _memory_pressure_levels_work() {
         assert_eq!(MemoryPressure::Low.chunk_size_factor(), 1.0);
         assert_eq!(MemoryPressure::Moderate.chunk_size_factor(), 0.8);
         assert_eq!(MemoryPressure::High.chunk_size_factor(), 0.5);
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_budget_allocation() -> Result<(), TaleError> {
+    fn memory_budget_allocation_works() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?; // 1KB limit
 
         // First allocation should succeed

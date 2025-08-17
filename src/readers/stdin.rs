@@ -3,7 +3,7 @@
 //! Specifically, scrolling *back* by negative offsets can be tricky when the
 //! offsets are large.
 
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
@@ -264,8 +264,11 @@ impl<'a> StdinProcessor<'a> {
     pub fn backtrack_lines(&mut self, lines_to_show: u64) -> Result<(), TaleError> {
         use std::collections::VecDeque;
 
+        use tempfile::NamedTempFile;
+
         let mut line_buffer: VecDeque<String> = VecDeque::with_capacity(lines_to_show as usize);
         let mut memory_used = 0usize;
+        let mut temp_file: Option<NamedTempFile> = None;
 
         // Read all input, keeping only the last N lines
         loop {
@@ -274,33 +277,128 @@ impl<'a> StdinProcessor<'a> {
                 break; // EOF
             }
 
-            // Add to circular buffer
-            if line_buffer.len() >= lines_to_show as usize {
-                // Remove oldest line and update memory usage
-                if let Some(old_line) = line_buffer.pop_front() {
-                    memory_used -= old_line.len();
+            // Check if we need to switch to temp file mode
+            if memory_used > MEMORY_LIMIT_BYTES && temp_file.is_none() {
+                // Create temp file and write current buffer to it
+                let mut temp = NamedTempFile::new().map_err(|e| {
+                    TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                        operation: "create temporary file for large stdin backtrack".to_string(),
+                        path: None,
+                        source: e,
+                    }))
+                })?;
+
+                // Write existing buffer to temp file
+                for line in &line_buffer {
+                    writeln!(temp, "{}", line).map_err(|e| {
+                        TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                            operation: "write to temporary file".to_string(),
+                            path: None,
+                            source: e,
+                        }))
+                    })?;
+                }
+
+                temp_file = Some(temp);
+
+                // Clear memory buffer since we're now using temp file
+                line_buffer.clear();
+                memory_used = 0;
+            }
+
+            match &mut temp_file {
+                Some(temp) => {
+                    // Write to temp file
+                    writeln!(temp, "{}", self.line).map_err(|e| {
+                        TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                            operation: "write to temporary file".to_string(),
+                            path: None,
+                            source: e,
+                        }))
+                    })?;
+                }
+                None => {
+                    // Add to circular buffer in memory
+                    if line_buffer.len() >= lines_to_show as usize {
+                        // Remove oldest line and update memory usage
+                        if let Some(old_line) = line_buffer.pop_front() {
+                            memory_used -= old_line.len();
+                        }
+                    }
+                    memory_used += self.line.len();
+                    line_buffer.push_back(self.line.clone());
                 }
             }
+        }
 
-            memory_used += self.line.len();
-            line_buffer.push_back(self.line.clone());
-
-            // Check memory limit - if exceeded, we would need temp file fallback
-            // For now, just warn and continue (temp file implementation would go here)
-            if memory_used > MEMORY_LIMIT_BYTES {
-                eprintln!(
-                    "Warning: Memory limit exceeded for line buffering. Consider using byte/block offsets for large inputs."
-                );
-                // TODO implement temp files feature here
+        // Output the result
+        match temp_file {
+            Some(mut temp) => {
+                // Flush and read back last N lines from temp file
+                temp.flush().map_err(|e| {
+                    TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                        operation: "flush temporary file".to_string(),
+                        path: None,
+                        source: e,
+                    }))
+                })?;
+                self.read_last_n_lines_from_temp_file(temp, lines_to_show)?;
+            }
+            None => {
+                // Output the buffered lines from memory
+                for buffered_line in line_buffer {
+                    self.process_line(&buffered_line)?;
+                }
             }
         }
 
-        // Output the buffered lines
-        for buffered_line in line_buffer {
-            self.process_line(&buffered_line)?;
-        }
         self.flush()?;
+        Ok(())
+    }
 
+    /// Read the last N lines from a temporary file
+    fn read_last_n_lines_from_temp_file(
+        &mut self,
+        temp_file: tempfile::NamedTempFile,
+        lines_to_show: u64,
+    ) -> Result<(), TaleError> {
+        use std::collections::VecDeque;
+        use std::fs::File;
+
+        // Reopen the temp file for reading
+        let file = File::open(temp_file.path()).map_err(|e| {
+            TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                operation: "open temporary file for reading".to_string(),
+                path: Some(temp_file.path().to_path_buf()),
+                source: e,
+            }))
+        })?;
+        let reader = BufReader::new(file);
+
+        let mut line_buffer: VecDeque<String> = VecDeque::with_capacity(lines_to_show as usize);
+
+        // Read all lines, keeping only the last N
+        for line_result in reader.lines() {
+            let line = line_result.map_err(|e| {
+                TaleError::from(Box::new(crate::errors::IoError::OperationFailed {
+                    operation: "read line from temporary file".to_string(),
+                    path: None,
+                    source: e,
+                }))
+            })?;
+
+            if line_buffer.len() >= lines_to_show as usize {
+                line_buffer.pop_front();
+            }
+            line_buffer.push_back(line);
+        }
+
+        // Output the last N lines
+        for line in line_buffer {
+            self.process_line(&line)?;
+        }
+
+        // Temp file will be automatically deleted when NamedTempFile is dropped
         Ok(())
     }
 }

@@ -308,14 +308,14 @@ mod tests {
     }
 
     #[test]
-    fn test_similarity() {
+    fn can_find_similar_files() {
         assert!(is_similar("file.txt", "file.log"));
         assert!(is_similar("config.json", "config.jsn"));
         assert!(!is_similar("file.txt", "completely_different.py"));
     }
 
     #[test]
-    fn test_file_error_creation() {
+    fn good_error_on_enofile() {
         let path = PathBuf::from("/nonexistent/file.txt");
         let similar = vec![PathBuf::from("/nonexistent/file.log")];
 

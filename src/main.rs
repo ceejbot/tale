@@ -13,7 +13,10 @@ use tale::{Args, config, multiplexed, readers};
 async fn main() -> MietteResult<()> {
     let args = Args::parse();
 
-    let config = ConfigOpts::new(&args);
+    let config = ConfigOpts::new(&args).unwrap_or_else(|e| {
+        eprintln!("Configuration error: {}", e);
+        std::process::exit(1);
+    });
     config::set(config).expect("Quite improbably failed to set config OnceLock on process start.");
 
     let mode = config::mode();
@@ -63,7 +66,7 @@ mod cli_tests {
             args: vec!["test.log".to_string()],
             ..Default::default()
         };
-        let config = ConfigOpts::new(&args);
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert!(matches!(config.offset_unit, OffsetUnit::Bytes));
         assert_eq!(config.offset, 100);
 
@@ -73,7 +76,7 @@ mod cli_tests {
             args: vec!["test.log".to_string()],
             ..Default::default()
         };
-        let config = ConfigOpts::new(&args);
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert!(matches!(config.offset_unit, OffsetUnit::Blocks));
         assert_eq!(config.offset, 2);
 
@@ -83,13 +86,13 @@ mod cli_tests {
             args: vec!["test.log".to_string()],
             ..Default::default()
         };
-        let config = ConfigOpts::new(&args);
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert!(matches!(config.offset_unit, OffsetUnit::Lines));
         assert_eq!(config.offset, 5);
     }
 
     #[test]
-    fn test_cli_with_adaptation() {
+    fn can_run_cli_with_adaptation() {
         let output = std::process::Command::new("cargo")
             .args(["run", "--", "fixtures/benchmarks/medium.log"])
             .output()

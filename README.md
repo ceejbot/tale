@@ -85,8 +85,6 @@ There is fairly stupid single-pass layout approach to print in columns the key/v
 
 File reading is somewhat pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode. There's similarly bad behavior for very large byte and block offsets with `stdin`, because I haven't yet implemented falling back to tempfiles when I hit certain size thresholds.
 
-I have [ripline](https://lib.rs/crates/ripline) in my back pocket for when I start tailing multiple files at once and being I/O bound instead of CPU bound is even remotely possible.
-
 ## LICENSE
 
 This code is licensed via [the Parity Public License.](https://paritylicense.com) This license requires people who build on top of this source code to share their work with the community, too. This means if you hack on it for work, you have to make your work repo public somehow. Fair's fair. See the license text for details.

@@ -1013,8 +1013,11 @@ mod tests {
             "level": "ERROR"
         }"#;
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Docker log should parse");
-        assert_eq!(parsed.log.as_ref().unwrap(), "Error: database connection failed\n");
-        assert_eq!(parsed.stream.as_ref().unwrap(), "stderr");
+        assert_eq!(
+            parsed.log.as_ref().expect("text fixtures must work"),
+            "Error: database connection failed\n"
+        );
+        assert_eq!(parsed.stream.as_ref().expect("text fixtures must work"), "stderr");
         assert_eq!(parsed.message, "Container error log");
         assert_eq!(parsed.level, "ERROR");
         assert!(parsed.timestamp.is_some());
@@ -1035,10 +1038,16 @@ mod tests {
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Kubernetes log should parse");
         assert_eq!(parsed.message, "Pod status updated");
         assert_eq!(parsed.level, "INFO");
-        assert_eq!(parsed.pod.as_ref().unwrap(), "coredns-558bd4d5db-xyz123");
-        assert_eq!(parsed.namespace.as_ref().unwrap(), "kube-system");
-        assert_eq!(parsed.container.as_ref().unwrap(), "coredns");
-        assert_eq!(parsed.node.as_ref().unwrap(), "worker-node-1");
+        assert_eq!(
+            parsed.pod.as_ref().expect("text fixtures must work"),
+            "coredns-558bd4d5db-xyz123"
+        );
+        assert_eq!(
+            parsed.namespace.as_ref().expect("text fixtures must work"),
+            "kube-system"
+        );
+        assert_eq!(parsed.container.as_ref().expect("text fixtures must work"), "coredns");
+        assert_eq!(parsed.node.as_ref().expect("text fixtures must work"), "worker-node-1");
         assert!(parsed.timestamp.is_some());
     }
 
@@ -1063,15 +1072,24 @@ mod tests {
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Nginx log should parse");
         assert_eq!(parsed.message, "Access log entry");
         assert_eq!(parsed.level, "INFO");
-        assert_eq!(parsed.method.as_ref().unwrap(), "GET");
-        assert_eq!(parsed.path.as_ref().unwrap(), "/api/users");
-        assert_eq!(parsed.status.as_ref().unwrap(), "200");
-        assert_eq!(parsed.response_bytes.as_ref().unwrap(), "1234");
-        assert_eq!(parsed.request_duration.as_ref().unwrap(), "0.123");
-        assert_eq!(parsed.upstream_time.as_ref().unwrap(), "0.100");
-        assert_eq!(parsed.upstream_server.as_ref().unwrap(), "backend:8080");
-        assert_eq!(parsed.upstream_status.as_ref().unwrap(), "200");
-        assert_eq!(parsed.query_args.as_ref().unwrap(), "limit=10&offset=20");
+        assert_eq!(parsed.method.as_ref().expect("text fixtures must work"), "GET");
+        assert_eq!(parsed.path.as_ref().expect("text fixtures must work"), "/api/users");
+        assert_eq!(parsed.status.as_ref().expect("text fixtures must work"), "200");
+        assert_eq!(parsed.response_bytes.as_ref().expect("text fixtures must work"), "1234");
+        assert_eq!(
+            parsed.request_duration.as_ref().expect("text fixtures must work"),
+            "0.123"
+        );
+        assert_eq!(parsed.upstream_time.as_ref().expect("text fixtures must work"), "0.100");
+        assert_eq!(
+            parsed.upstream_server.as_ref().expect("text fixtures must work"),
+            "backend:8080"
+        );
+        assert_eq!(parsed.upstream_status.as_ref().expect("text fixtures must work"), "200");
+        assert_eq!(
+            parsed.query_args.as_ref().expect("text fixtures must work"),
+            "limit=10&offset=20"
+        );
         assert!(parsed.timestamp.is_some());
     }
 
@@ -1089,9 +1107,15 @@ mod tests {
         }"#;
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("OpenTelemetry log should parse");
         assert!(parsed.timestamp.is_some());
-        assert_eq!(parsed.trace_id.as_ref().unwrap(), "abc123def456789");
-        assert_eq!(parsed.span_id.as_ref().unwrap(), "def456abc123");
-        assert_eq!(parsed.trace_flags.as_ref().unwrap(), "01");
+        assert_eq!(
+            parsed.trace_id.as_ref().expect("text fixtures must work"),
+            "abc123def456789"
+        );
+        assert_eq!(
+            parsed.span_id.as_ref().expect("text fixtures must work"),
+            "def456abc123"
+        );
+        assert_eq!(parsed.trace_flags.as_ref().expect("text fixtures must work"), "01");
         assert_eq!(parsed.level, "INFO");
         assert_eq!(parsed.message, "Operation completed successfully");
         assert!(parsed.resource.is_some());
@@ -1114,12 +1138,24 @@ mod tests {
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Mixed Docker/K8s log should parse");
         assert_eq!(parsed.message, "Container startup");
         assert_eq!(parsed.level, "INFO");
-        assert_eq!(parsed.log.as_ref().unwrap(), "Starting application server\n");
-        assert_eq!(parsed.stream.as_ref().unwrap(), "stdout");
-        assert_eq!(parsed.pod.as_ref().unwrap(), "app-deployment-abc123");
-        assert_eq!(parsed.namespace.as_ref().unwrap(), "production");
-        assert_eq!(parsed.container.as_ref().unwrap(), "app-server");
-        assert_eq!(parsed.node.as_ref().unwrap(), "k8s-worker-3");
+        assert_eq!(
+            parsed.log.as_ref().expect("text fixtures must work"),
+            "Starting application server\n"
+        );
+        assert_eq!(parsed.stream.as_ref().expect("text fixtures must work"), "stdout");
+        assert_eq!(
+            parsed.pod.as_ref().expect("text fixtures must work"),
+            "app-deployment-abc123"
+        );
+        assert_eq!(
+            parsed.namespace.as_ref().expect("text fixtures must work"),
+            "production"
+        );
+        assert_eq!(
+            parsed.container.as_ref().expect("text fixtures must work"),
+            "app-server"
+        );
+        assert_eq!(parsed.node.as_ref().expect("text fixtures must work"), "k8s-worker-3");
         assert!(parsed.timestamp.is_some());
     }
 
@@ -1145,20 +1181,32 @@ mod tests {
         }"#;
         let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Performance log should parse");
         assert_eq!(parsed.message, "HTTP request processed");
-        assert_eq!(parsed.method.as_ref().unwrap(), "POST");
-        assert_eq!(parsed.url.as_ref().unwrap(), "/api/orders");
-        assert_eq!(parsed.status.as_ref().unwrap(), "201");
-        assert_eq!(parsed.request_duration.as_ref().unwrap(), "0.485");
-        assert_eq!(parsed.upstream_time.as_ref().unwrap(), "0.420");
-        assert_eq!(parsed.upstream_header_time.as_ref().unwrap(), "0.050");
-        assert_eq!(parsed.upstream_server.as_ref().unwrap(), "backend1:3000,backend2:3000");
-        assert_eq!(parsed.upstream_status.as_ref().unwrap(), "201,201");
-        assert_eq!(parsed.response_bytes.as_ref().unwrap(), "2048");
-        assert_eq!(parsed.request_size.as_ref().unwrap(), "512");
+        assert_eq!(parsed.method.as_ref().expect("text fixtures must work"), "POST");
+        assert_eq!(parsed.url.as_ref().expect("text fixtures must work"), "/api/orders");
+        assert_eq!(parsed.status.as_ref().expect("text fixtures must work"), "201");
+        assert_eq!(
+            parsed.request_duration.as_ref().expect("text fixtures must work"),
+            "0.485"
+        );
+        assert_eq!(parsed.upstream_time.as_ref().expect("text fixtures must work"), "0.420");
+        assert_eq!(
+            parsed.upstream_header_time.as_ref().expect("text fixtures must work"),
+            "0.050"
+        );
+        assert_eq!(
+            parsed.upstream_server.as_ref().expect("text fixtures must work"),
+            "backend1:3000,backend2:3000"
+        );
+        assert_eq!(
+            parsed.upstream_status.as_ref().expect("text fixtures must work"),
+            "201,201"
+        );
+        assert_eq!(parsed.response_bytes.as_ref().expect("test fixtures must work"), "2048");
+        assert_eq!(parsed.request_size.as_ref().expect("test fixtures must work"), "512");
     }
 
     #[test]
-    fn test_stable_sort_single_file_with_same_timestamps() {
+    fn stable_sort_single_file_with_same_timestamps() {
         use std::path::PathBuf;
 
         // Lines with identical timestamps - should maintain original order (stable

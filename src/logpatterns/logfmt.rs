@@ -101,7 +101,7 @@ fn parse_logfmt(input: &str) -> LogfmtLine {
             if c == '=' || c.is_whitespace() {
                 break;
             }
-            key.push(chars.next().unwrap());
+            key.push(chars.next().expect("we know it has a next"));
         }
 
         // Check if we have an equals sign
@@ -115,7 +115,7 @@ fn parse_logfmt(input: &str) -> LogfmtLine {
                 let mut val = String::new();
                 let mut escaped = false;
 
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if escaped {
                         val.push(c);
                         escaped = false;
@@ -135,7 +135,7 @@ fn parse_logfmt(input: &str) -> LogfmtLine {
                     if c.is_whitespace() {
                         break;
                     }
-                    val.push(chars.next().unwrap());
+                    val.push(chars.next().expect("we know it has a next"));
                 }
                 val
             };
