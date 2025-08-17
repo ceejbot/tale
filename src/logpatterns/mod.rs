@@ -10,9 +10,11 @@ use serde::Deserialize;
 
 mod columns;
 mod formatting;
+mod logfmt;
 mod patterns;
 mod sourced;
 
+use logfmt::*;
 use patterns::*;
 pub use sourced::SourcedLine;
 
@@ -30,6 +32,7 @@ where
 /// An enum to help serde deserialize incoming log lines. There are some
 /// we decide are log lines with fields we recognize, and some that are just
 /// json we pretty-print. And then there's plain text.
+/// Ordered from most specific to least specific for serde deserialization.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged, bound(deserialize = "'de: 'a"))]
 pub enum Printable<'a> {
@@ -38,6 +41,7 @@ pub enum Printable<'a> {
     Message(Box<Message<'a>>),
     TimeOnly(Timestamped),
     Json(GenericJson),
+    Logfmt(LogfmtLine),
     Text(String),
 }
 
@@ -49,6 +53,7 @@ impl<'a> PrettyPrintable for Printable<'a> {
             Printable::Message(message) => message.as_ref().write(buffer),
             Printable::TimeOnly(timestamped) => timestamped.write(buffer),
             Printable::Json(generic) => generic.write(buffer),
+            Printable::Logfmt(logfmt) => logfmt.write(buffer),
             Printable::Text(text) => {
                 buffer.extend_from_slice(text.as_bytes());
                 buffer.len()
@@ -63,6 +68,7 @@ impl<'a> PrettyPrintable for Printable<'a> {
             Printable::Message(message) => message.as_ref().cells(),
             Printable::TimeOnly(timestamped) => timestamped.cells(),
             Printable::Json(generic) => generic.cells(),
+            Printable::Logfmt(logfmt) => logfmt.cells(),
             Printable::Text(_) => Vec::new(),
         }
     }
@@ -76,6 +82,7 @@ impl<'a> Display for Printable<'a> {
             Printable::Message(message) => message.fmt(f),
             Printable::TimeOnly(timestamped) => timestamped.fmt(f),
             Printable::Json(generic) => generic.fmt(f),
+            Printable::Logfmt(logfmt) => logfmt.fmt(f),
             Printable::Text(text) => text.fmt(f),
         }
     }

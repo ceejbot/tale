@@ -16,6 +16,7 @@ pub struct VariantCounters {
     pub message: AtomicUsize,
     pub time_only: AtomicUsize,
     pub json: AtomicUsize,
+    pub logfmt: AtomicUsize,
     pub text: AtomicUsize,
     pub parse_errors: AtomicUsize,
 }
@@ -31,6 +32,7 @@ impl VariantCounters {
             Printable::Message(_) => self.message.fetch_add(1, Ordering::Relaxed),
             Printable::TimeOnly(_) => self.time_only.fetch_add(1, Ordering::Relaxed),
             Printable::Json(_) => self.json.fetch_add(1, Ordering::Relaxed),
+            Printable::Logfmt(_) => self.logfmt.fetch_add(1, Ordering::Relaxed),
             Printable::Text(_) => self.text.fetch_add(1, Ordering::Relaxed),
         };
     }
@@ -48,6 +50,7 @@ impl VariantCounters {
             message: self.message.load(Ordering::Relaxed),
             time_only: self.time_only.load(Ordering::Relaxed),
             json: self.json.load(Ordering::Relaxed),
+            logfmt: self.logfmt.load(Ordering::Relaxed),
             text: self.text.load(Ordering::Relaxed),
             parse_errors: self.parse_errors.load(Ordering::Relaxed),
         }
@@ -60,6 +63,7 @@ impl VariantCounters {
         self.message.store(0, Ordering::Relaxed);
         self.time_only.store(0, Ordering::Relaxed);
         self.json.store(0, Ordering::Relaxed);
+        self.logfmt.store(0, Ordering::Relaxed);
         self.text.store(0, Ordering::Relaxed);
         self.parse_errors.store(0, Ordering::Relaxed);
     }
@@ -73,13 +77,14 @@ pub struct VariantCounts {
     pub message: usize,
     pub time_only: usize,
     pub json: usize,
+    pub logfmt: usize,
     pub text: usize,
     pub parse_errors: usize,
 }
 
 impl VariantCounts {
     pub fn total(&self) -> usize {
-        self.canonical + self.java + self.message + self.time_only + self.json + self.text
+        self.canonical + self.java + self.message + self.time_only + self.json + self.logfmt + self.text
     }
 
     pub fn successful_parses(&self) -> usize {
@@ -103,6 +108,7 @@ impl VariantCounts {
             message: (self.message as f64 / total) * 100.0,
             time_only: (self.time_only as f64 / total) * 100.0,
             json: (self.json as f64 / total) * 100.0,
+            logfmt: (self.logfmt as f64 / total) * 100.0,
             text: (self.text as f64 / total) * 100.0,
             parse_errors: (self.parse_errors as f64 / total) * 100.0,
         }
@@ -130,9 +136,13 @@ impl VariantCounts {
             self.canonical, percentages.canonical
         );
         println!("  Java:      {} ({:.1}%)", self.java, percentages.java);
-        println!("  Message:   {} ({:.1}%) - FLEXIBLE", self.message, percentages.message);
+        println!(
+            "  Message:   {} ({:.1}%) - SUPERSET (includes GCP, Logstash, etc.)",
+            self.message, percentages.message
+        );
         println!("  TimeOnly:  {} ({:.1}%)", self.time_only, percentages.time_only);
         println!("  Generic:   {} ({:.1}%) - FALLBACK", self.json, percentages.json);
+        println!("  Logfmt:    {} ({:.1}%)", self.logfmt, percentages.logfmt);
         println!();
 
         if percentages.canonical > 50.0 {
@@ -162,6 +172,7 @@ pub struct VariantPercentages {
     pub message: f64,
     pub time_only: f64,
     pub json: f64,
+    pub logfmt: f64,
     pub text: f64,
     pub parse_errors: f64,
 }
@@ -203,6 +214,7 @@ mod tests {
             json: 15,
             text: 5,
             java: 0,
+            logfmt: 0,
             time_only: 0,
             parse_errors: 0,
         };

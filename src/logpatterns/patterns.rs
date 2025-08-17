@@ -134,60 +134,151 @@ impl PrettyPrintable for &Timestamped {
     }
 }
 
-/// A log line, somewhat flexibly formatted. There are two fields that we demand
-/// be present: a log level and a message. We allow several possible names for
-/// common log fields. The rest of the fields are mentioned only so we can print
-/// them in a controlled order. We do not demand that they be present.
+/// Optimized superset JSON log structure with field clustering for performance.
+/// Fields are ordered by parsing frequency: core fields first, then HTTP (most
+/// common), then specialized contexts only when needed.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Message<'a> {
-    /// The time this message was logged.
-    #[serde(alias = "time", alias = "ts")]
+    /// Primary timestamp field (supports multiple common names and formats)
+    #[serde(alias = "time", alias = "ts", alias = "@timestamp", alias = "time_local")]
     pub(crate) timestamp: Option<jiff::Timestamp>,
-    /// The string message part of the log line.
-    #[serde(alias = "msg", borrow)]
+
+    /// The string message part of the log line (required field)
+    #[serde(alias = "msg", alias = "body", borrow)]
     pub(crate) message: Cow<'a, str>,
-    /// Log level for this line.
+
+    /// Log level/severity
     #[serde(alias = "lvl", alias = "severity", borrow)]
     pub(crate) level: Cow<'a, str>,
-    /// The source module where the log line originated.
-    #[serde(alias = "mod", alias = "lib", borrow)]
-    pub(crate) module: Option<Cow<'a, str>>,
-    /// The file where the log line originated.
-    #[serde(borrow)]
-    pub(crate) file: Option<Cow<'a, str>>,
-    /// The line in the file where the log line originated.
-    pub(crate) line: Option<usize>,
-    /// A request id
-    #[serde(alias = "requestId", borrow)]
-    pub(crate) request_id: Option<Cow<'a, str>>,
-    /// Remote host.
-    #[serde(alias = "hostname", alias = "remote_host", borrow)]
-    pub(crate) host: Option<Cow<'a, str>>,
-    /// http method
-    #[serde(borrow)]
+
+    /// HTTP method
+    #[serde(alias = "requestMethod", borrow)]
     pub(crate) method: Option<Cow<'a, str>>,
-    /// a url
-    #[serde(borrow)]
+    /// Request URL
+    #[serde(alias = "requestUrl", borrow)]
     pub(crate) url: Option<Cow<'a, str>>,
-    /// http response status code
+    /// HTTP response status code
     #[serde(alias = "statusCode", alias = "code", borrow)]
     pub(crate) status: Option<Cow<'a, str>>,
-    /// elapsed time
-    #[serde(alias = "elapsed_ms", alias = "elapsed_time", borrow)]
+    /// Request/response elapsed time
+    #[serde(alias = "elapsed_ms", alias = "elapsed_time", alias = "latency", borrow)]
     pub(crate) elapsed: Option<Cow<'a, str>>,
-    /// size of the written response
+    /// Response size
     #[serde(
         alias = "sent_bytes",
         alias = "length",
         alias = "written",
         alias = "bodylen",
-        alias = "body",
         alias = "size",
+        alias = "responseSize",
         borrow
     )]
     pub(crate) size: Option<Cow<'a, str>>,
-    /// The unpredictable parts of the log line, which we'll handle more
-    /// generically.
+
+    // === Request Tracking Fields (Common - third priority) ===
+    /// Request/trace identifier
+    #[serde(alias = "requestId", alias = "request_id", alias = "requestid", borrow)]
+    pub(crate) request_id: Option<Cow<'a, str>>,
+    /// Thread name/identifier
+    #[serde(alias = "threadName", alias = "thread_name", alias = "thread_id", borrow)]
+    pub(crate) thread: Option<Cow<'a, str>>,
+    /// Remote host/IP
+    #[serde(
+        alias = "hostname",
+        alias = "remote_host",
+        alias = "remoteIp",
+        alias = "source_host",
+        borrow
+    )]
+    pub(crate) host: Option<Cow<'a, str>>,
+    /// User agent
+    #[serde(alias = "userAgent", borrow)]
+    pub(crate) user_agent: Option<Cow<'a, str>>,
+
+    // === Source Location Fields (Moderately common) ===
+    /// The source module/class where the log line originated
+    #[serde(
+        alias = "mod",
+        alias = "lib",
+        alias = "class",
+        alias = "className",
+        alias = "loggerName",
+        borrow
+    )]
+    pub(crate) module: Option<Cow<'a, str>>,
+    /// The file where the log line originated
+    #[serde(alias = "fileName", alias = "file_name", borrow)]
+    pub(crate) file: Option<Cow<'a, str>>,
+    /// The line in the file where the log line originated
+    #[serde(alias = "lineNumber", alias = "line_number")]
+    pub(crate) line: Option<usize>,
+    /// Method/function name
+    #[serde(alias = "methodName", alias = "method_name", borrow)]
+    pub(crate) function: Option<Cow<'a, str>>,
+
+    // === Web Server Performance Fields (grouped for performance) ===
+    /// Response body bytes sent
+    #[serde(alias = "body_bytes_sent", borrow)]
+    pub(crate) response_bytes: Option<Cow<'a, str>>,
+    /// Total request processing time
+    #[serde(alias = "request_time", borrow)]
+    pub(crate) request_duration: Option<Cow<'a, str>>,
+    /// Backend response time
+    #[serde(alias = "upstream_response_time", borrow)]
+    pub(crate) upstream_time: Option<Cow<'a, str>>,
+    /// Backend header time
+    #[serde(alias = "upstream_header_time", borrow)]
+    pub(crate) upstream_header_time: Option<Cow<'a, str>>,
+    /// Backend server address
+    #[serde(alias = "upstream_addr", borrow)]
+    pub(crate) upstream_server: Option<Cow<'a, str>>,
+    /// Backend response status
+    #[serde(alias = "upstream_status", borrow)]
+    pub(crate) upstream_status: Option<Cow<'a, str>>,
+    /// Request URI/path
+    #[serde(alias = "uri", borrow)]
+    pub(crate) path: Option<Cow<'a, str>>,
+    /// Query string arguments
+    #[serde(alias = "args", borrow)]
+    pub(crate) query_args: Option<Cow<'a, str>>,
+    /// Request content length
+    #[serde(alias = "request_length", borrow)]
+    pub(crate) request_size: Option<Cow<'a, str>>,
+
+    // === Tracing/Observability Fields (grouped for performance) ===
+    /// Distributed trace ID
+    #[serde(alias = "traceId", borrow)]
+    pub(crate) trace_id: Option<Cow<'a, str>>,
+    /// Span ID within trace
+    #[serde(alias = "spanId", borrow)]
+    pub(crate) span_id: Option<Cow<'a, str>>,
+    /// Trace flags for sampling
+    #[serde(alias = "traceFlags", borrow)]
+    pub(crate) trace_flags: Option<Cow<'a, str>>,
+    /// OpenTelemetry resource metadata
+    pub(crate) resource: Option<serde_json::Value>,
+
+    // k8s fields grouped for locality
+    /// Docker log line content
+    #[serde(borrow)]
+    pub(crate) log: Option<Cow<'a, str>>,
+    /// Docker stream designation (stdout/stderr)
+    #[serde(borrow)]
+    pub(crate) stream: Option<Cow<'a, str>>,
+    /// Kubernetes pod name
+    #[serde(alias = "pod_name", borrow)]
+    pub(crate) pod: Option<Cow<'a, str>>,
+    /// Kubernetes namespace
+    #[serde(borrow)]
+    pub(crate) namespace: Option<Cow<'a, str>>,
+    /// Container name
+    #[serde(alias = "container_name", borrow)]
+    pub(crate) container: Option<Cow<'a, str>>,
+    /// Kubernetes node name
+    #[serde(alias = "node_name", borrow)]
+    pub(crate) node: Option<Cow<'a, str>>,
+
+    /// Catch-all for any additional fields not explicitly handled
     #[serde(flatten)]
     pub(crate) rest: serde_json::Value,
 }
@@ -244,24 +335,38 @@ impl<'a> PrettyPrintable for &Message<'a> {
         // avoid counting ansi escapes.
         let mut cells: Vec<String> = Vec::new();
 
-        // Work a little bit to show the log line location coherently.
-        // Probably if one is present, all are present, but not always.
-        let logloc = if let Some(ref module) = self.module
-            && let Some(ref fname) = self.file
-            && let Some(lineno) = self.line
-        {
-            format!("{module}: {fname}:{lineno}")
-        } else if let Some(ref fname) = self.file
-            && let Some(lineno) = self.line
-        {
-            format!("{fname}:{lineno}")
-        } else if let Some(ref fname) = self.file {
-            fname.to_string()
-        } else {
-            Default::default()
-        };
-        if !logloc.is_empty() {
-            cells.push(format!("{}", logloc.yellow()));
+        // Build comprehensive location information from multiple possible sources
+        let mut location_parts = Vec::new();
+
+        // Module/class information
+        if let Some(ref module) = self.module {
+            location_parts.push(module.as_ref().to_string());
+        }
+
+        // Function/method information
+        if let Some(ref function) = self.function {
+            if !location_parts.is_empty() {
+                location_parts.push("::".to_string());
+            }
+            location_parts.push(function.as_ref().to_string());
+        }
+
+        // File and line information
+        if let Some(ref file) = self.file {
+            if !location_parts.is_empty() {
+                location_parts.push(" (".to_string());
+            }
+            location_parts.push(file.as_ref().to_string());
+            if let Some(line) = self.line {
+                location_parts.push(format!(":{}", line));
+            }
+            if !location_parts.is_empty() && location_parts.last() != Some(&" (".to_string()) {
+                location_parts.push(")".to_string());
+            }
+        }
+
+        if !location_parts.is_empty() {
+            cells.push(location_parts.join("").yellow().to_string());
         }
 
         // if we didn't already snag the request id
@@ -277,7 +382,7 @@ impl<'a> PrettyPrintable for &Message<'a> {
         };
 
         // Special treatment for verb url status
-        let req_line = if let Some(ref method) = self.method
+        let mut req_line = if let Some(ref method) = self.method
             && let Some(ref url) = self.url
         {
             format!("{method} {url} {status}")
@@ -287,22 +392,139 @@ impl<'a> PrettyPrintable for &Message<'a> {
             status
         };
         if !req_line.is_empty() {
+            if let Some(ref query_args) = self.query_args {
+                req_line = format!("{req_line}&{query_args}");
+            }
             cells.push(format!("{}", req_line.blue()));
         }
 
-        if let Some(ref v) = self.host {
-            cells.push(format!("{}{}", "host=".dimmed(), v.blue()));
+        if let Some(ref path) = self.path {
+            let full = if req_line.is_empty()
+                && let Some(ref query_args) = self.query_args
+            {
+                format!("{path}&{query_args}")
+            } else {
+                path.to_string()
+            };
+            cells.push(format!("{}={}", "path".dimmed(), full.blue()));
+        } else if req_line.is_empty()
+            && let Some(ref query_args) = self.query_args
+        {
+            cells.push(format!("&{}", query_args.blue()));
         }
 
-        // Units and format are unpredictable, so we leave it as-is.
-        if let Some(ref v) = self.elapsed {
-            cells.push(format!("{}{}", "elapsed=".dimmed(), v.bright_purple()));
+        if let Some(ref request_size) = self.request_size {
+            cells.push(format!("{} bytes", request_size.bright_purple()));
         }
 
-        // Same as above.
-        if let Some(ref v) = self.size {
-            cells.push(format!("{}{}", "size=".dimmed(), v.bright_purple()));
+        // Docker/Kubernetes container information
+        if let Some(ref log_content) = self.log {
+            cells.push(format!("{}={}", "log".dimmed(), log_content.white()));
         }
+
+        if let Some(ref stream) = self.stream {
+            let colored_stream = match stream.as_ref() {
+                "stdout" => stream.green().to_string(),
+                "stderr" => stream.red().to_string(),
+                _ => stream.white().to_string(),
+            };
+            cells.push(format!("{}={}", "stream".dimmed(), colored_stream));
+        }
+
+        if let Some(ref pod) = self.pod {
+            cells.push(format!("{}={}", "pod".dimmed(), pod.bright_blue()));
+        }
+
+        if let Some(ref namespace) = self.namespace {
+            cells.push(format!("{}={}", "namespace".dimmed(), namespace.bright_cyan()));
+        }
+
+        if let Some(ref container) = self.container {
+            cells.push(format!("{}={}", "container".dimmed(), container.cyan()));
+        }
+
+        if let Some(ref node) = self.node {
+            cells.push(format!("{}={}", "node".dimmed(), node.blue()));
+        }
+
+        // Web server performance metrics
+        if let Some(ref response_bytes) = self.response_bytes {
+            cells.push(format!(
+                "{}={}",
+                "response_bytes".dimmed(),
+                response_bytes.bright_purple()
+            ));
+        }
+
+        if let Some(ref request_duration) = self.request_duration {
+            cells.push(format!(
+                "{}={}",
+                "request_time".dimmed(),
+                request_duration.bright_purple()
+            ));
+        }
+
+        if let Some(ref upstream_time) = self.upstream_time {
+            cells.push(format!("{}={}", "upstream_time".dimmed(), upstream_time.purple()));
+        }
+
+        if let Some(ref upstream_server) = self.upstream_server {
+            cells.push(format!("{}={}", "upstream".dimmed(), upstream_server.bright_blue()));
+        }
+
+        if let Some(ref upstream_status) = self.upstream_status {
+            cells.push(format!("{}={}", "upstream_status".dimmed(), upstream_status.blue()));
+        }
+
+        if let Some(ref upstream_header_time) = self.upstream_header_time {
+            cells.push(format!(
+                "{}={}ms",
+                "upstream_header_time".dimmed(),
+                upstream_header_time.bright_purple()
+            ));
+        }
+
+        // OpenTelemetry tracing
+        if let Some(ref trace_id) = self.trace_id {
+            cells.push(format!("{}={}", "trace_id".dimmed(), trace_id.bright_yellow()));
+        }
+
+        if let Some(ref span_id) = self.span_id {
+            cells.push(format!("{}={}", "span_id".dimmed(), span_id.bright_yellow()));
+        }
+
+        if let Some(ref trace_flags) = self.trace_flags {
+            cells.push(format!("{}={}", "trace_flags".dimmed(), trace_flags.yellow()));
+        }
+
+        if let Some(ref resources) = self.resource {
+            cells.push(colorize_json_value(resources));
+        }
+
+        // Thread information
+        if let Some(ref thread) = self.thread {
+            cells.push(format!("{}={}", "thread".dimmed(), thread.green()));
+        }
+
+        // Host/IP information
+        if let Some(ref host) = self.host {
+            cells.push(format!("{}={}", "host".dimmed(), host.blue()));
+        }
+
+        // User agent
+        if let Some(ref user_agent) = self.user_agent {
+            cells.push(format!("{}={}", "user_agent".dimmed(), user_agent.green()));
+        }
+
+        // Performance metrics
+        if let Some(ref elapsed) = self.elapsed {
+            cells.push(format!("{}={}", "elapsed".dimmed(), elapsed.bright_purple()));
+        }
+
+        if let Some(ref size) = self.size {
+            cells.push(format!("{}={}", "size".dimmed(), size.bright_purple()));
+        }
+
         match self.rest {
             Value::Object(ref map) => {
                 map.iter().for_each(|(key, value)| {
@@ -505,12 +727,12 @@ impl<'a> Display for Java<'a> {
 }
 
 /// This is a possibly familiar format that we require conformance to.
+/// https://brandur.org/canonical-log-lines
 #[derive(Debug, Clone, Deserialize)]
 pub struct Canonical<'a> {
     /// The time this message was logged.
     #[serde(alias = "time", alias = "ts")]
     pub(super) timestamp: jiff::Timestamp,
-    #[serde(alias = "severity")]
     pub(super) level: Cow<'a, str>,
     pub(super) message: Cow<'a, str>,
     method: Cow<'a, str>,
@@ -778,6 +1000,161 @@ mod tests {
         assert_eq!(sorted[0].line_number, 0);
         assert_eq!(sorted[1].line_number, 1);
         assert_eq!(sorted[2].line_number, 2);
+    }
+
+    #[test]
+    fn docker_json_log_format() {
+        // Test Docker JSON logging driver format
+        let logline = r#"{
+            "log": "Error: database connection failed\n",
+            "stream": "stderr",
+            "time": "2025-08-16T14:30:25.123456789Z",
+            "message": "Container error log",
+            "level": "ERROR"
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Docker log should parse");
+        assert_eq!(parsed.log.as_ref().unwrap(), "Error: database connection failed\n");
+        assert_eq!(parsed.stream.as_ref().unwrap(), "stderr");
+        assert_eq!(parsed.message, "Container error log");
+        assert_eq!(parsed.level, "ERROR");
+        assert!(parsed.timestamp.is_some());
+    }
+
+    #[test]
+    fn kubernetes_structured_log_format() {
+        // Test Kubernetes CRI/structured logging format
+        let logline = r#"{
+            "ts": "2025-08-16T15:20:00.123456Z",
+            "msg": "Pod status updated",
+            "level": "INFO",
+            "pod": "coredns-558bd4d5db-xyz123",
+            "namespace": "kube-system",
+            "container": "coredns",
+            "node": "worker-node-1"
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Kubernetes log should parse");
+        assert_eq!(parsed.message, "Pod status updated");
+        assert_eq!(parsed.level, "INFO");
+        assert_eq!(parsed.pod.as_ref().unwrap(), "coredns-558bd4d5db-xyz123");
+        assert_eq!(parsed.namespace.as_ref().unwrap(), "kube-system");
+        assert_eq!(parsed.container.as_ref().unwrap(), "coredns");
+        assert_eq!(parsed.node.as_ref().unwrap(), "worker-node-1");
+        assert!(parsed.timestamp.is_some());
+    }
+
+    #[test]
+    fn nginx_json_access_log_format() {
+        // Test Nginx JSON access log format
+        let logline = r#"{
+            "timestamp": "2025-08-16T14:21:45Z",
+            "remote_addr": "127.0.0.1",
+            "method": "GET",
+            "uri": "/api/users",
+            "status": "200",
+            "body_bytes_sent": "1234",
+            "request_time": "0.123",
+            "upstream_response_time": "0.100",
+            "upstream_addr": "backend:8080",
+            "upstream_status": "200",
+            "args": "limit=10&offset=20",
+            "message": "Access log entry",
+            "level": "INFO"
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Nginx log should parse");
+        assert_eq!(parsed.message, "Access log entry");
+        assert_eq!(parsed.level, "INFO");
+        assert_eq!(parsed.method.as_ref().unwrap(), "GET");
+        assert_eq!(parsed.path.as_ref().unwrap(), "/api/users");
+        assert_eq!(parsed.status.as_ref().unwrap(), "200");
+        assert_eq!(parsed.response_bytes.as_ref().unwrap(), "1234");
+        assert_eq!(parsed.request_duration.as_ref().unwrap(), "0.123");
+        assert_eq!(parsed.upstream_time.as_ref().unwrap(), "0.100");
+        assert_eq!(parsed.upstream_server.as_ref().unwrap(), "backend:8080");
+        assert_eq!(parsed.upstream_status.as_ref().unwrap(), "200");
+        assert_eq!(parsed.query_args.as_ref().unwrap(), "limit=10&offset=20");
+        assert!(parsed.timestamp.is_some());
+    }
+
+    #[test]
+    fn opentelemetry_log_format() {
+        // Test OpenTelemetry log format with tracing
+        let logline = r#"{
+            "timestamp": "2025-08-16T14:00:00Z",
+            "traceId": "abc123def456789",
+            "spanId": "def456abc123",
+            "traceFlags": "01",
+            "level": "INFO",
+            "body": "Operation completed successfully",
+            "resource": {"service.name": "api-server", "service.version": "1.0.0"}
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("OpenTelemetry log should parse");
+        assert!(parsed.timestamp.is_some());
+        assert_eq!(parsed.trace_id.as_ref().unwrap(), "abc123def456789");
+        assert_eq!(parsed.span_id.as_ref().unwrap(), "def456abc123");
+        assert_eq!(parsed.trace_flags.as_ref().unwrap(), "01");
+        assert_eq!(parsed.level, "INFO");
+        assert_eq!(parsed.message, "Operation completed successfully");
+        assert!(parsed.resource.is_some());
+    }
+
+    #[test]
+    fn docker_kubernetes_mixed_log() {
+        // Test log that combines Docker and Kubernetes fields
+        let logline = r#"{
+            "time": "2025-08-16T14:30:00Z",
+            "log": "Starting application server\n",
+            "stream": "stdout",
+            "message": "Container startup",
+            "level": "INFO",
+            "pod_name": "app-deployment-abc123",
+            "namespace": "production",
+            "container_name": "app-server",
+            "node_name": "k8s-worker-3"
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Mixed Docker/K8s log should parse");
+        assert_eq!(parsed.message, "Container startup");
+        assert_eq!(parsed.level, "INFO");
+        assert_eq!(parsed.log.as_ref().unwrap(), "Starting application server\n");
+        assert_eq!(parsed.stream.as_ref().unwrap(), "stdout");
+        assert_eq!(parsed.pod.as_ref().unwrap(), "app-deployment-abc123");
+        assert_eq!(parsed.namespace.as_ref().unwrap(), "production");
+        assert_eq!(parsed.container.as_ref().unwrap(), "app-server");
+        assert_eq!(parsed.node.as_ref().unwrap(), "k8s-worker-3");
+        assert!(parsed.timestamp.is_some());
+    }
+
+    #[test]
+    fn web_server_performance_log() {
+        // Test web server log with extensive performance metrics
+        let logline = r#"{
+            "timestamp": "2025-08-16T14:45:30Z",
+            "message": "HTTP request processed",
+            "level": "INFO",
+            "method": "POST",
+            "url": "/api/orders",
+            "status": "201",
+            "request_time": "0.485",
+            "upstream_response_time": "0.420",
+            "upstream_header_time": "0.050",
+            "upstream_addr": "backend1:3000,backend2:3000",
+            "upstream_status": "201,201",
+            "body_bytes_sent": "2048",
+            "request_length": "512",
+            "remote_host": "192.168.1.100",
+            "user_agent": "Mozilla/5.0 (compatible; API-Client/1.0)"
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("Performance log should parse");
+        assert_eq!(parsed.message, "HTTP request processed");
+        assert_eq!(parsed.method.as_ref().unwrap(), "POST");
+        assert_eq!(parsed.url.as_ref().unwrap(), "/api/orders");
+        assert_eq!(parsed.status.as_ref().unwrap(), "201");
+        assert_eq!(parsed.request_duration.as_ref().unwrap(), "0.485");
+        assert_eq!(parsed.upstream_time.as_ref().unwrap(), "0.420");
+        assert_eq!(parsed.upstream_header_time.as_ref().unwrap(), "0.050");
+        assert_eq!(parsed.upstream_server.as_ref().unwrap(), "backend1:3000,backend2:3000");
+        assert_eq!(parsed.upstream_status.as_ref().unwrap(), "201,201");
+        assert_eq!(parsed.response_bytes.as_ref().unwrap(), "2048");
+        assert_eq!(parsed.request_size.as_ref().unwrap(), "512");
     }
 
     #[test]

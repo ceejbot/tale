@@ -52,6 +52,7 @@ impl<'a> SourcedLine<'a> {
             Printable::Message(message) => message.timestamp.as_ref(),
             Printable::TimeOnly(timestamped) => Some(&timestamped.timestamp),
             Printable::Json(_) => None,
+            Printable::Logfmt(logfmt) => logfmt.timestamp(),
             Printable::Text(_) => None,
         }
     }
@@ -204,6 +205,7 @@ mod tests {
                 }
                 String::default()
             }
+            Printable::Logfmt(ref v) => v.message(),
             Printable::Text(ref v) => v.clone(),
         }
     }

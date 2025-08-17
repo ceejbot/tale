@@ -1,8 +1,8 @@
 # tale
 
-A tail-compatible tool for pretty-printing ndjson files, especially logs.
+A tail-compatible tool for pretty-printing `ndjson` files, especially logs.
 
-All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's not yet finished in two senses. First, there are some tail features that aren't done yet. Also, it's unfinished in that edge cases aren't well handled, and memory use might explode with very large files and very large negative offsets. If all you want to do is cat or tail a log file with ndjson content, it'll do a nice job with constant modest memory use.
+All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's not yet finished in two senses. First, there are some tail features that aren't done yet. Second, I haven't supported all the json parsing scenarios I'd like to yet. See the notes section below for more commentary on what's in flight. But if you want to cat or tail a log file with `ndjson` content, `tale` does a nice job with constant modest memory use.
 
 ## Usage
 
@@ -81,7 +81,7 @@ On my Macbook `tale` will pretty-print a million-line file at an approx rate of 
 
 To that point: If there is a specific json logging pattern you use that `tale` does not support directly, please give me some samples-- anonymized if you prefer-- and I'll implement deserialization and pretty-printing specifically for that pattern.
 
-There is fairly stupid single-pass layout approach to print the key/value pairs I don't have an opinion about in columns. There is hand-tweaked formatting for the keys I do have an opinion about.
+There is fairly stupid single-pass layout approach to print in columns the key/value pairs I don't have an opinion. It isn't very pretty because it is single-pass. There is hand-tweaked formatting for the keys I do have an opinion about.
 
 File reading is somewhat pathological (aka not good) when offsets are very large for very large files. That is, if you say `tale -500000 rilly-long.log` and the file has 500,001 lines, nothing smart will happen. You probably get what you deserve, to be honest. At least memory use won't explode. There's similarly bad behavior for very large byte and block offsets with `stdin`, because I haven't yet implemented falling back to tempfiles when I hit certain size thresholds.
 
