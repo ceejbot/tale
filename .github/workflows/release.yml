@@ -86,13 +86,13 @@ jobs:
     #                   REF_NAME="${{ inputs.ref_name }}"
     #               fi
     #               cargo +stable build --release
-    #               tar czf thematic-x86_64-unknown-linux-gnu.tar.gz --strip-components=2  target/release/thematic
-    #               gh release upload "$REF_NAME" "thematic-x86_64-unknown-linux-gnu.tar.gz"
+    #               tar czf tale-x86_64-unknown-linux-gnu.tar.gz --strip-components=2  target/release/tale
+    #               gh release upload "$REF_NAME" "tale-x86_64-unknown-linux-gnu.tar.gz"
 
-    #               digest=$(shasum -a 256 thematic-x86_64-unknown-linux-gnu.tar.gz)
+    #               digest=$(shasum -a 256 tale-x86_64-unknown-linux-gnu.tar.gz)
     #               shasum=$(echo $digest | { read first rest; echo $first; } )
-    #               echo $shasum > thematic-"x86_64-unknown-linux-gnu".tar.gz.sha256
-    #               gh release upload "$REF_NAME" "thematic-x86_64-unknown-linux-gnu.tar.gz.sha256"
+    #               echo $shasum > tale-"x86_64-unknown-linux-gnu".tar.gz.sha256
+    #               gh release upload "$REF_NAME" "tale-x86_64-unknown-linux-gnu.tar.gz.sha256"
 
     release-macos:
         name: release-macos
@@ -127,13 +127,13 @@ jobs:
                   mkdir -p dist
                   cd dist
                   for target in "aarch64-apple-darwin" "x86_64-apple-darwin"; do
-                      tar czf thematic-$target.tar.gz --strip-components=4  ../target/$target/release/thematic
-                      gh release upload "$REF_NAME" "thematic-$target.tar.gz"
+                      tar czf tale-$target.tar.gz --strip-components=4  ../target/$target/release/tale
+                      gh release upload "$REF_NAME" "tale-$target.tar.gz"
 
-                      digest=$(shasum -a 256 thematic-$target.tar.gz)
+                      digest=$(shasum -a 256 tale-$target.tar.gz)
                       shasum=$(echo $digest | { read first rest; echo $first; } )
-                      echo $shasum > thematic-"$target".tar.gz.sha256
-                      gh release upload "$REF_NAME" "thematic-$target.tar.gz.sha256"
+                      echo $shasum > tale-"$target".tar.gz.sha256
+                      gh release upload "$REF_NAME" "tale-$target.tar.gz.sha256"
                   done
 
     postflight:

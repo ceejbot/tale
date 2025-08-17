@@ -1,6 +1,6 @@
 [package]
 name = "tale"
-version = "0.1.0"
+version = "0.2.0"
 description = "A tail-compatible tool for pretty-printing ndjson files, especially logs."
 categories = ["command-line-utilities", "text-processing"]
 keywords = ["ndjson", "pretty-print", "logging", "json", "tail"]
