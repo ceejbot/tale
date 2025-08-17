@@ -6,13 +6,17 @@ use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
 
+mod batch;
+mod file_state;
+pub mod watcher;
+
 use crate::errors::TaleError;
 use crate::logpatterns::*;
 use crate::{config, process_line};
 
 /// Handle multi-file static mode (read all files once, no following)
 pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
-    use crate::file_state::FileStateManager;
+    use file_state::FileStateManager;
 
     let mut file_manager = FileStateManager::new();
 
@@ -63,8 +67,8 @@ pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
 
 /// Handle multi-file tailing mode (watch for changes and follow)
 pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
-    use crate::batch::{BatchConfig, BatchedLine, create_processor_with_config};
-    use crate::watcher::{WatchEvent, create_watcher};
+    use batch::{BatchConfig, BatchedLine, create_processor_with_config};
+    use watcher::{WatchEvent, create_watcher};
 
     // Create the file watcher
     let mut watcher = create_watcher();

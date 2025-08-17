@@ -9,18 +9,15 @@ use std::io::{self, Write};
 use bytes::{Buf, BytesMut};
 use logpatterns::*;
 
-pub mod batch;
 pub mod config;
 pub mod defaults;
 pub mod errors;
-pub mod file_state;
 pub mod json_profiler;
 pub mod logpatterns;
 pub mod memory_budget;
 pub mod metrics;
 pub mod multiplexed;
 pub mod readers;
-pub mod watcher;
 
 // Re-export commonly used types for convenience
 use clap::Parser;
@@ -65,11 +62,10 @@ pub struct Args {
     #[arg(short = 'n', long, group = "units")]
     pub offset: Option<i64>,
     /// When following more than one file, show a header with the file name
-    /// along with every line from that file. Not yet implemented.
+    /// along with every line from that file.
     #[arg(short, long)]
     pub verbose: bool,
     /// Do not ever show file name headers when following more than one file.
-    /// Not yet implemented.
     #[arg(short, long, conflicts_with = "verbose")]
     pub quiet: bool,
 
@@ -93,15 +89,16 @@ pub struct Args {
     /// Disable adaptive chunking
     #[arg(short, long)]
     pub adaptive: bool,
-    /// Choose a specific chunk strategy for testing
-    #[arg(short = 's', long)]
-    pub chunk_strategy: Option<Strategy>,
     /// Set a limit on how much memory can be used in file buffers
     #[arg(short, long)]
     pub max_memory: Option<usize>,
     #[cfg(debug_assertions)]
     #[arg(long, hide = true)]
     pub conservative: bool,
+    #[cfg(debug_assertions)]
+    /// Choose a specific chunk strategy for testing
+    #[arg(short = 's', long)]
+    pub chunk_strategy: Option<Strategy>,
     /// Print JSON parsing profile report after processing (debug builds only)
     #[cfg(debug_assertions)]
     #[arg(long, hide = true)]
@@ -158,5 +155,63 @@ pub fn strip_line_ending(line: &mut String) {
             // iterators, but we might as well try.
             line.pop();
         }
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Args::command().debug_assert();
+    }
+
+    #[test]
+    fn offset_unit_args() {
+        use crate::Args;
+        use crate::config::{ConfigOpts, OffsetUnit};
+
+        // Test bytes offset detection - test the config struct directly
+        let args = Args {
+            bytes: Some(100),
+            args: vec!["test.log".to_string()],
+            ..Default::default()
+        };
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
+        assert!(matches!(config.offset_unit, OffsetUnit::Bytes));
+        assert_eq!(config.offset, 100);
+
+        // Test blocks offset detection
+        let args = Args {
+            blocks: Some(2),
+            args: vec!["test.log".to_string()],
+            ..Default::default()
+        };
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
+        assert!(matches!(config.offset_unit, OffsetUnit::Blocks));
+        assert_eq!(config.offset, 2);
+
+        // Test lines offset detection (default)
+        let args = Args {
+            offset: Some(5),
+            args: vec!["test.log".to_string()],
+            ..Default::default()
+        };
+        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
+        assert!(matches!(config.offset_unit, OffsetUnit::Lines));
+        assert_eq!(config.offset, 5);
+    }
+
+    #[test]
+    fn can_run_cli_with_adaptation() {
+        let output = std::process::Command::new("cargo")
+            .args(["run", "--", "fixtures/benchmarks/medium.log"])
+            .output()
+            .expect("failed to execute");
+
+        assert!(output.status.success());
+        // Verify output is correct
     }
 }

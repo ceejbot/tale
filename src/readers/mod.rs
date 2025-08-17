@@ -1,38 +1,27 @@
 //! File processing architecture with different strategies for various use
 //! cases.
 //!
-//! This module provides a clean hierarchy of file processors:
-//!
-//! ## Processors
 //! - **BufferedFileProcessor**: Simple forward-only reading for small files
 //! - **ChunkedFileReader**: Memory-efficient processing with Strategy-based
 //!   adaptation
 //! - **BackSeekingProcessor**: Handles backward seeking and tail-like
 //!   functionality
 //!
-//! ## Strategy Pattern
 //! ChunkedFileReader uses the Strategy pattern for chunk size management:
 //! - **StaticStrategy**: Fixed optimal chunk size (fastest, predictable memory)
 //! - **AdaptiveStrategy**: Dynamic sizing based on performance metrics
 //! - **ConservativeStrategy**: Memory-constrained environments
 //!
-//! ## Processor Selection
 //! `create_file_processor()` automatically selects the best processor based on:
 //! - File size and offset requirements
 //! - Memory constraints (--chunked, --no-chunked flags)
 //! - Operation type (negative offsets → BackSeekingProcessor)
-//!
-//! ## Architecture Benefits
-//! - **Single source of truth**: Strategy owns chunk_size (not ChunkConfig)
-//! - **Memory efficiency**: Bounded memory usage regardless of file size
-//! - **Performance**: Adaptive strategies optimize for throughput vs memory
-//! - **Extensibility**: Easy to add new strategies or processors
 
 mod backseeking;
 mod buffered;
-mod chunked; // the file processor
+mod chunked; // the chunked file processor
 mod stdin;
-pub mod strategies; // the chunking strategies; will figure out naming later
+pub mod strategies; // chunking strategies
 
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -42,28 +31,130 @@ pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
 use miette::ErrReport;
+use owo_colors::OwoColorize;
 pub use stdin::*;
 pub use strategies::*;
 
 use crate::defaults::io::*;
 use crate::defaults::processing::*;
 use crate::errors::{FileError, TaleError, find_similar_files};
+use crate::multiplexed::watcher::{MultiFileWatcher, WatchEvent, WatcherConfig};
 use crate::{config, process_line};
 
+/// Wait for a file to be created when using sticky mode
+async fn wait_for_file_creation(target_path: &Path) -> Result<(), TaleError> {
+    use std::time::Duration;
+
+    eprintln!("Watching for '{}'…", target_path.display().yellow().bold());
+
+    // Get the parent directory to watch
+    let parent_dir = target_path.parent().ok_or_else(|| {
+        TaleError::from(Box::new(FileError::NotFound {
+            path: target_path.to_path_buf(),
+            similar_files: vec!["Parent directory not found".to_string()],
+        }))
+    })?;
+
+    // Check if parent directory exists
+    if !parent_dir.exists() {
+        return Err(TaleError::from(Box::new(FileError::NotFound {
+            path: parent_dir.to_path_buf(),
+            similar_files: vec!["Parent directory must exist for file watching".to_string()],
+        })));
+    }
+
+    let target_filename = target_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        TaleError::from(Box::new(FileError::NotFound {
+            path: target_path.to_path_buf(),
+            similar_files: vec!["Invalid filename".to_string()],
+        }))
+    })?;
+
+    // Create a file watcher for the parent directory
+    let mut watcher = MultiFileWatcher::new(WatcherConfig::default());
+
+    // Add the parent directory to watch
+    watcher.add_files(vec![parent_dir]).await?;
+
+    // Start watching
+    let mut event_receiver = watcher.watch().await?;
+
+    let mut elapsed_seconds = 0;
+    let mut last_message_time = std::time::Instant::now();
+
+    loop {
+        // Use a timeout to periodically show waiting messages
+        match tokio::time::timeout(Duration::from_secs(5), event_receiver.recv()).await {
+            Ok(Some(event)) => {
+                match event {
+                    WatchEvent::FileCreated(created_path) => {
+                        if let Some(created_filename) = created_path.file_name().and_then(|n| n.to_str())
+                            && created_filename == target_filename
+                        {
+                            eprintln!("+++> '{}' created; tailing", target_filename.yellow().bold());
+                            return Ok(());
+                        }
+                    }
+                    WatchEvent::Error(_err) => {
+                        // Continue watching despite errors
+                    }
+                    _ => {
+                        // Ignore other events (modify, delete, etc.)
+                    }
+                }
+            }
+            Ok(None) => {
+                // Channel closed
+                return Err(TaleError::from(Box::new(FileError::NotFound {
+                    path: target_path.to_path_buf(),
+                    similar_files: vec!["File watcher stopped unexpectedly".to_string()],
+                })));
+            }
+            Err(_) => {
+                // Timeout - show periodic message
+                elapsed_seconds += 5;
+                if last_message_time.elapsed() >= Duration::from_secs(30) {
+                    eprintln!(
+                        "Still watching for '{}' ({}s elapsed)...",
+                        target_path.display().yellow().bold(),
+                        elapsed_seconds.bright_magenta()
+                    );
+                    last_message_time = std::time::Instant::now();
+                }
+
+                // Check if file appeared while we weren't watching (race condition)
+                if target_path.exists() {
+                    eprintln!("+++> '{}' created; tailing", target_filename.yellow().bold());
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
 /// We're displaying a file. Let's chug through it.
-pub fn handle_file(fpath: &Path) -> Result<(), TaleError> {
-    let _sticky = config::sticky();
+pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
+    let sticky = config::sticky();
 
     // Check if file exists and provide helpful suggestions
     if !fpath.exists() {
-        // TODO if we are sticky, we need to watch the file until it
-        // appears or the user kills the process.
-        let similar_files = find_similar_files(fpath);
-        return Err(Box::new(FileError::not_found_with_suggestions(
-            fpath.to_path_buf(),
-            similar_files,
-        ))
-        .into());
+        if sticky {
+            // In sticky mode, wait for the file to be created
+            wait_for_file_creation(fpath).await?;
+
+            // After the file is created, verify it's actually a file (not a directory)
+            if !fpath.is_file() {
+                return Err(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf())).into());
+            }
+        } else {
+            // In normal mode, return error with suggestions
+            let similar_files = find_similar_files(fpath);
+            return Err(Box::new(FileError::not_found_with_suggestions(
+                fpath.to_path_buf(),
+                similar_files,
+            ))
+            .into());
+        }
     }
 
     // Check if it's actually a file (not a directory, etc.)

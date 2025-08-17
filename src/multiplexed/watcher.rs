@@ -11,8 +11,8 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use super::file_state::FileStateManager;
 use crate::errors::*;
-use crate::file_state::FileStateManager;
 
 /// Events that can occur during file watching
 #[derive(Debug, Clone)]
