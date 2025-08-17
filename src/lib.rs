@@ -30,6 +30,7 @@ pub use errors::TaleError;
 pub use memory_budget::{MemoryBudget, MemoryPressure};
 pub use readers::FileProcessor;
 
+#[cfg(debug_assertions)]
 use crate::readers::Strategy;
 
 #[derive(Debug, Clone, Parser, Default)]

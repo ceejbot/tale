@@ -393,8 +393,13 @@ impl ConfigOpts {
             }
         });
 
+        #[cfg(debug_assertions)]
+        let stratarg = args.chunk_strategy.clone();
+        #[cfg(not(debug_assertions))]
+        let stratarg = None;
+
         // Use specified strategy or production default
-        let strategy = args.chunk_strategy.clone().or_else(|| match system_config.strategy {
+        let strategy = stratarg.or_else(|| match system_config.strategy {
             "static" => Some(Strategy::Static(StaticStrategy::default())),
             "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
             "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
