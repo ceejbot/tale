@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
+use miette::{IntoDiagnostic, Result};
 
 mod batch;
 mod file_state;
@@ -15,7 +16,7 @@ use crate::logpatterns::*;
 use crate::{config, process_line};
 
 /// Handle multi-file static mode (read all files once, no following)
-pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
+pub fn handle_static(paths: Vec<PathBuf>) -> Result<()> {
     use file_state::FileStateManager;
 
     let mut file_manager = FileStateManager::new();
@@ -56,17 +57,17 @@ pub fn handle_static(paths: Vec<PathBuf>) -> Result<(), TaleError> {
 
     for wrapped in all_sourced_lines {
         wrapped.write(&mut buffer);
-        outlock.write_all(buffer.chunk())?;
-        outlock.write_all(&[0x0a; 1])?; // blank line
+        outlock.write_all(buffer.chunk()).into_diagnostic()?;
+        outlock.write_all(&[0x0a; 1]).into_diagnostic()?; // blank line
         buffer.clear();
     }
 
-    outlock.flush()?;
+    outlock.flush().into_diagnostic()?;
     Ok(())
 }
 
 /// Handle multi-file tailing mode (watch for changes and follow)
-pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
+pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<()> {
     use batch::{BatchConfig, BatchedLine, batched_with_config};
     use watcher::{WatchEvent, create_watcher};
 
@@ -114,7 +115,7 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
                                 );
                                 match line_sender.send(batched_line) {
                                     Ok(v) => v,
-                                    Err(_) => return Err(TaleError::BatchedLineSender)
+                                    Err(_) => return Err(TaleError::BatchedLineSender.into())
                                 }
                             }
                         }
@@ -140,7 +141,7 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<(), TaleError> {
                         for batched_line in sorted_lines {
                             process_line(&batched_line.content, &mut buffer, &mut outlock)?;
                         }
-                        outlock.flush()?;
+                        outlock.flush().into_diagnostic()?;
                     }
                     None => {
                         // Batch processor stopped

@@ -30,7 +30,7 @@ pub use backseeking::*;
 pub use buffered::*;
 use bytes::BytesMut;
 pub use chunked::*;
-use miette::ErrReport;
+use miette::{IntoDiagnostic, Result};
 use owo_colors::OwoColorize;
 pub use stdin::*;
 pub use strategies::*;
@@ -42,7 +42,7 @@ use crate::multiplexed::watcher::{MultiFileWatcher, WatchEvent, WatcherConfig};
 use crate::{config, process_line};
 
 /// Wait for a file to be created when using sticky mode
-async fn wait_for_file_creation(target_path: &Path) -> Result<(), TaleError> {
+async fn wait_for_file_creation(target_path: &Path) -> Result<()> {
     use std::time::Duration;
 
     eprintln!("Watching for '{}'…", target_path.display().yellow().bold());
@@ -60,14 +60,15 @@ async fn wait_for_file_creation(target_path: &Path) -> Result<(), TaleError> {
         return Err(TaleError::from(Box::new(FileError::NotFound {
             path: parent_dir.to_path_buf(),
             similar_files: vec!["Parent directory must exist for file watching".to_string()],
-        })));
+        }))
+        .into());
     }
 
     let target_filename = target_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-        TaleError::from(Box::new(FileError::NotFound {
+        miette::Report::from(TaleError::from(Box::new(FileError::NotFound {
             path: target_path.to_path_buf(),
             similar_files: vec!["Invalid filename".to_string()],
-        }))
+        })))
     })?;
 
     // Create a file watcher for the parent directory
@@ -108,7 +109,8 @@ async fn wait_for_file_creation(target_path: &Path) -> Result<(), TaleError> {
                 return Err(TaleError::from(Box::new(FileError::NotFound {
                     path: target_path.to_path_buf(),
                     similar_files: vec!["File watcher stopped unexpectedly".to_string()],
-                })));
+                }))
+                .into());
             }
             Err(_) => {
                 // Timeout - show periodic message
@@ -133,7 +135,7 @@ async fn wait_for_file_creation(target_path: &Path) -> Result<(), TaleError> {
 }
 
 /// We're displaying a file. Let's chug through it.
-pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
+pub async fn handle_file(fpath: &Path) -> Result<()> {
     let sticky = config::sticky();
 
     // Check if file exists and provide helpful suggestions
@@ -144,22 +146,22 @@ pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
 
             // After the file is created, verify it's actually a file (not a directory)
             if !fpath.is_file() {
-                return Err(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf())).into());
+                return Err(TaleError::from(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf()))).into());
             }
         } else {
             // In normal mode, return error with suggestions
             let similar_files = find_similar_files(fpath);
-            return Err(Box::new(FileError::not_found_with_suggestions(
+            return Err(TaleError::from(Box::new(FileError::not_found_with_suggestions(
                 fpath.to_path_buf(),
                 similar_files,
-            ))
+            )))
             .into());
         }
     }
 
     // Check if it's actually a file (not a directory, etc.)
     if !fpath.is_file() {
-        return Err(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf())).into());
+        return Err(TaleError::from(Box::new(FileError::not_a_file_with_type(fpath.to_path_buf()))).into());
     }
 
     // Try to create processor and provide helpful context for common errors
@@ -168,7 +170,7 @@ pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
     // BackSeekingProcessor handles its own special cases (negative offsets, bytes,
     // blocks)
     if let FileProcessorType::BackSeeking(mut backseeker) = processor {
-        return backseeker.tail();
+        return backseeker.tail().map_err(|e| e.into());
     }
 
     // For buffered and chunked processors, handle offset scenarios
@@ -185,9 +187,12 @@ pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
             let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
             let mut outlock = io::stdout().lock();
 
-            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
+            processor.process_lines(|line| {
+                process_line(line, &mut buffer, &mut outlock)
+                    .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+            })?;
 
-            outlock.flush()?;
+            outlock.flush().into_diagnostic()?;
         }
 
         // Zero offset or other cases: process entire file
@@ -195,9 +200,12 @@ pub async fn handle_file(fpath: &Path) -> Result<(), TaleError> {
             let mut buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
             let mut outlock = io::stdout().lock();
 
-            processor.process_lines(|line| process_line(line, &mut buffer, &mut outlock))?;
+            processor.process_lines(|line| {
+                process_line(line, &mut buffer, &mut outlock)
+                    .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+            })?;
 
-            outlock.flush()?;
+            outlock.flush().into_diagnostic()?;
         }
     }
     Ok(())
@@ -284,7 +292,7 @@ pub trait FileProcessor {
     fn file_size(&self) -> u64;
 
     /// Seek to a specific position in the file
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport>;
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, TaleError>;
 
     /// Get current position in the file
     fn position(&self) -> u64;
@@ -325,7 +333,7 @@ impl<'a> FileProcessor for FileProcessorType<'a> {
         }
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, TaleError> {
         match self {
             FileProcessorType::Buffered(processor) => processor.seek(pos),
             FileProcessorType::Chunked(processor) => processor.seek(pos),
@@ -350,6 +358,7 @@ mod tests {
 
     use super::*;
     use crate::config::ConfigOpts;
+    use crate::tests::TestLogPattern;
 
     fn create_test_file(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().expect("Failed to create temp file");
@@ -376,7 +385,7 @@ mod tests {
 
     #[test]
     fn processor_selection() {
-        let fp = PathBuf::from("./fixtures/benchmarks/medium.log");
+        let testfp = crate::tests::create_test_file(120_000, TestLogPattern::Canonical);
 
         // Test 1: Negative offset always uses Simple processor
         crate::config::with_config(
@@ -388,7 +397,7 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result = create_file_processor(&fp, Some(1_000_000_000))
+                let result = create_file_processor(&testfp, Some(1_000_000_000))
                     .expect("should create processor for negative offset");
                 assert!(
                     matches!(result, FileProcessorType::BackSeeking(_)),
@@ -407,8 +416,8 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result =
-                    create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for byte offset");
+                let result = create_file_processor(&testfp, Some(1_000_000_000))
+                    .expect("should create processor for byte offset");
                 assert!(
                     matches!(result, FileProcessorType::BackSeeking(_)),
                     "Byte offset should use Simple processor"
@@ -426,8 +435,8 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result =
-                    create_file_processor(&fp, Some(1_000_000_000)).expect("should create processor for block offset");
+                let result = create_file_processor(&testfp, Some(1_000_000_000))
+                    .expect("should create processor for block offset");
                 assert!(
                     matches!(result, FileProcessorType::BackSeeking(_)),
                     "Block offset should use Simple processor"
@@ -445,8 +454,8 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result =
-                    create_file_processor(&fp, Some(100_000_000)).expect("should create processor for force_chunked");
+                let result = create_file_processor(&testfp, Some(100_000_000))
+                    .expect("should create processor for force_chunked");
                 assert!(
                     matches!(result, FileProcessorType::Chunked(_)),
                     "force_chunked should use Chunked processor"
@@ -464,8 +473,8 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result =
-                    create_file_processor(&fp, Some(200_000_000)).expect("should create processor for disable_chunked");
+                let result = create_file_processor(&testfp, Some(200_000_000))
+                    .expect("should create processor for disable_chunked");
                 assert!(
                     matches!(result, FileProcessorType::Buffered(_)),
                     "disable_chunked should prevent Chunked processor"
@@ -483,7 +492,7 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result = create_file_processor(&fp, Some(1_500_000_000)) // 1.5GB
+                let result = create_file_processor(&testfp, Some(1_500_000_000)) // 1.5GB
                     .expect("should create processor for large file");
                 assert!(
                     matches!(result, FileProcessorType::Chunked(_)),
@@ -502,7 +511,7 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result = create_file_processor(&fp, Some(150_000_000)) // 150MB + large offset
+                let result = create_file_processor(&testfp, Some(150_000_000)) // 150MB + large offset
                     .expect("should create processor for large file + large offset");
                 assert!(
                     matches!(result, FileProcessorType::Chunked(_)),
@@ -521,7 +530,7 @@ mod tests {
                 ..ConfigOpts::default()
             },
             || {
-                let result = create_file_processor(&fp, Some(10_000_000)) // 10MB
+                let result = create_file_processor(&testfp, Some(10_000_000)) // 10MB
                     .expect("should create processor for small file + small offset");
                 assert!(
                     matches!(result, FileProcessorType::Buffered(_)),

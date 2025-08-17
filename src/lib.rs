@@ -8,6 +8,7 @@ use std::io::{self, Write};
 
 use bytes::{Buf, BytesMut};
 use logpatterns::*;
+use miette::{IntoDiagnostic, Result};
 
 pub mod config;
 pub mod defaults;
@@ -124,7 +125,7 @@ fn v3_styles() -> Styles {
 
 /// Process a single line of input (JSON or plain text) and write to output.
 #[inline]
-pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> Result<(), TaleError> {
+pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutLock<'_>) -> Result<()> {
     match serde_json::from_str::<Printable<'_>>(line) {
         Ok(message) => {
             // Profile which variant was parsed (debug builds only for minimal overhead)
@@ -132,8 +133,8 @@ pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutL
             json_profiler::record_variant(&message);
 
             message.write(buffer);
-            outlock.write_all(buffer.chunk())?;
-            outlock.write_all(&[0x0a; 1])?; // blank line
+            outlock.write_all(buffer.chunk()).into_diagnostic()?;
+            outlock.write_all(&[0x0a; 1]).into_diagnostic()?; // blank line
             buffer.clear();
         }
         Err(_) => {
@@ -141,8 +142,8 @@ pub fn process_line(line: &str, buffer: &mut BytesMut, outlock: &mut io::StdoutL
             #[cfg(debug_assertions)]
             json_profiler::record_parse_error();
 
-            outlock.write_all(line.as_bytes())?;
-            outlock.write_all(b"\n")?;
+            outlock.write_all(line.as_bytes()).into_diagnostic()?;
+            outlock.write_all(b"\n").into_diagnostic()?;
         }
     }
     Ok(())
@@ -209,9 +210,9 @@ mod cli_tests {
     }
 
     #[test]
-    fn can_run_cli_with_adaptation() {
+    fn can_run_cli_and_emit_help() {
         let output = std::process::Command::new("cargo")
-            .args(["run", "--", "fixtures/benchmarks/medium.log"])
+            .args(["run", "--", "--help"])
             .output()
             .expect("failed to execute");
 

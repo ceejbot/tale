@@ -24,8 +24,6 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use miette::{ErrReport, Result};
-
 use super::FileProcessor;
 use super::strategies::Strategy;
 use crate::errors::TaleError;
@@ -197,7 +195,7 @@ impl ChunkedFileReader {
     }
 
     /// Create a ChunkedFileReader with optimal configuration for the file
-    pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, ErrReport> {
+    pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
         Ok(Self::static_optimal(path)?)
     }
 
@@ -217,7 +215,7 @@ impl ChunkedFileReader {
     }
 
     /// Read the next chunk from the file
-    pub fn read_chunk(&mut self) -> Result<Option<FileChunk>> {
+    pub fn read_chunk(&mut self) -> Result<Option<FileChunk>, TaleError> {
         // If we have pending data, we need to process it even if we're at EOF
         if self.is_at_end() && self.pending_data.is_empty() {
             return Ok(None);
@@ -347,7 +345,7 @@ impl ChunkedFileReader {
     }
 
     /// Seek to a specific position in the file
-    pub fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+    pub fn seek(&mut self, pos: SeekFrom) -> Result<u64, TaleError> {
         let new_pos = self.file.seek(pos).map_err(TaleError::from)?;
 
         self.current_position = new_pos;
@@ -455,7 +453,7 @@ impl FileProcessor for ChunkedFileReader {
         self.file_size
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, TaleError> {
         self.seek(pos)
     }
 

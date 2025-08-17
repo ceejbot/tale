@@ -42,6 +42,5 @@ async fn main() -> MietteResult<()> {
         json_profiler::print_report();
     }
 
-    // Convert TaleError to miette Report for display
-    result.map_err(miette::Report::from)
+    result
 }

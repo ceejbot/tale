@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use miette::{Diagnostic, ErrReport, SourceSpan};
+use miette::{Diagnostic, SourceSpan};
 use owo_colors::OwoColorize;
 use thiserror::Error;
 
@@ -129,12 +129,6 @@ pub enum IoError {
         #[source]
         source: std::io::Error,
     },
-}
-
-impl From<ErrReport> for TaleError {
-    fn from(_value: ErrReport) -> Self {
-        todo!()
-    }
 }
 
 // Helper functions for creating errors with context

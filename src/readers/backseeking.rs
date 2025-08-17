@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
-use miette::{ErrReport, Result, WrapErr};
+use miette::IntoDiagnostic;
 
 use super::FileProcessor;
 use crate::defaults::io::*;
@@ -51,7 +51,7 @@ impl<'a> FileProcessor for BackSeekingProcessor<'a> {
         self.initial_file_size
     }
 
-    fn seek(&mut self, pos: io::SeekFrom) -> Result<u64, ErrReport> {
+    fn seek(&mut self, pos: io::SeekFrom) -> Result<u64, TaleError> {
         if let Some(mut f) = self.file.as_ref() {
             Ok(f.seek(pos).map_err(TaleError::from)?)
         } else {
@@ -219,7 +219,8 @@ impl<'a> BackSeekingProcessor<'a> {
 
     /// Process a single line through the formatting pipeline
     pub fn process_line(&mut self, line: &str) -> Result<(), TaleError> {
-        process_line(line, &mut self.buffer, &mut self.outlock).with_context(|| "Failed to process line")?;
+        process_line(line, &mut self.buffer, &mut self.outlock)
+            .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
         self.count += 1;
         self.flush_if_needed()
     }
@@ -240,12 +241,14 @@ impl<'a> BackSeekingProcessor<'a> {
         Ok(())
     }
 
-    pub fn tail(&mut self) -> Result<(), TaleError> {
+    pub fn tail(&mut self) -> miette::Result<()> {
         let tailing = config::tailing();
         let offset_unit = config::offset_unit();
         let offset = config::offset();
 
-        let file = self.move_to_position(offset, offset_unit, tailing)?;
+        let file = self
+            .move_to_position(offset, offset_unit, tailing)
+            .map_err(|e| miette::Report::from(e))?;
         let mut reader = BufReader::new(file);
 
         // If we've got a positive line offset, we still need to skip our N lines
@@ -257,12 +260,12 @@ impl<'a> BackSeekingProcessor<'a> {
 
         // Now at last we get to start printing. What a fuss.
         let mut line = String::with_capacity(LINE_CAPACITY);
-        while reader.read_line(&mut line)? != 0 {
+        while reader.read_line(&mut line).into_diagnostic()? != 0 {
             strip_line_ending(&mut line);
-            self.process_line(line.as_str())?;
+            self.process_line(line.as_str()).map_err(|e| miette::Report::from(e))?;
             line.clear();
         }
-        self.flush()?;
+        self.flush().map_err(|e| miette::Report::from(e))?;
 
         if !tailing {
             return Ok(());
@@ -273,20 +276,20 @@ impl<'a> BackSeekingProcessor<'a> {
 
         // Get the file back from the reader
         let mut file = reader.into_inner();
-        let mut file_position = file.stream_position()?;
+        let mut file_position = file.stream_position().into_diagnostic()?;
 
         // polling loop. TODO consider better impl
         loop {
             std::thread::sleep(Duration::from_millis(100));
 
             // Check if file has grown
-            let current_size = file.seek(io::SeekFrom::End(0))?;
+            let current_size = file.seek(io::SeekFrom::End(0)).into_diagnostic()?;
             if current_size > file_position {
                 // Hide and seek, trains and sewing machines.
-                file.seek(io::SeekFrom::Start(file_position))?;
+                file.seek(io::SeekFrom::Start(file_position)).into_diagnostic()?;
                 let mut tail_reader = BufReader::new(&file);
 
-                match tail_reader.read_line(&mut line)? {
+                match tail_reader.read_line(&mut line).into_diagnostic()? {
                     0 => {
                         // EOF - no new data available, continue polling
                         continue;
@@ -296,7 +299,7 @@ impl<'a> BackSeekingProcessor<'a> {
                         // New data available - process it.
                         process_line(&line, &mut self.buffer, &mut self.outlock)?;
                         if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                            self.outlock.flush()?;
+                            self.outlock.flush().into_diagnostic()?;
                             last_flush = Instant::now();
                         }
 
@@ -306,7 +309,7 @@ impl<'a> BackSeekingProcessor<'a> {
                 }
 
                 // Note where we finished reading so we can figure out if we get more.
-                file_position = file.stream_position()?;
+                file_position = file.stream_position().into_diagnostic()?;
             }
         }
     }

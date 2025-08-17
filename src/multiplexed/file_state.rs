@@ -10,7 +10,7 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use miette::{ErrReport, WrapErr};
+use miette::WrapErr;
 
 use crate::errors::TaleError;
 
@@ -44,7 +44,9 @@ impl FileState {
     /// Create a new FileState and immediately refresh it
     pub fn new_and_refresh(path: PathBuf) -> Result<Self, TaleError> {
         let mut state = Self::new(path);
-        state.refresh()?;
+        state
+            .refresh()
+            .map_err(|e| TaleError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
         Ok(state)
     }
 
@@ -54,7 +56,7 @@ impl FileState {
     }
 
     /// Update the file state by checking the current file system state
-    pub fn refresh(&mut self) -> Result<bool, ErrReport> {
+    pub fn refresh(&mut self) -> miette::Result<bool> {
         let metadata = match std::fs::metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -67,7 +69,7 @@ impl FileState {
             }
             Err(err) => {
                 return Err(TaleError::from(err))
-                    .with_context(|| format!("Failed to get metadata for {}", self.path.display()))?;
+                    .with_context(|| format!("Failed to get metadata for {}", self.path.display()));
             }
         };
 
@@ -128,7 +130,7 @@ impl FileState {
     }
 
     /// Read new lines from the file starting from the current position
-    pub fn read_new_lines(&mut self) -> Result<Vec<String>, ErrReport> {
+    pub fn read_new_lines(&mut self) -> Result<Vec<String>, TaleError> {
         if !self.available || !self.has_new_data() {
             return Ok(Vec::new());
         }

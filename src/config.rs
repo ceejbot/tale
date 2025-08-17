@@ -139,6 +139,7 @@ mod runtime {
 }
 
 // Re-export the runtime implementation as the public API
+use miette::Result;
 pub use runtime::{config, set};
 #[cfg(test)]
 pub use runtime::{update, with_config};
@@ -311,7 +312,7 @@ fn handle_possible_paths(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
 }
 
 impl ConfigOpts {
-    pub fn new(args: &crate::Args) -> Result<Self, TaleError> {
+    pub fn new(args: &crate::Args) -> Result<Self> {
         // Get production defaults
         let system_config = get_system_config();
         let (mode, maybe_offset) = match args.args.len() {

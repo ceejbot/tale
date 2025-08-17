@@ -4,8 +4,6 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
-use miette::{ErrReport, Result};
-
 use super::FileProcessor;
 use crate::errors::TaleError;
 
@@ -68,7 +66,7 @@ impl FileProcessor for BufferedFileProcessor {
         self.file_size
     }
 
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, ErrReport> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, TaleError> {
         let new_pos = self.reader.get_mut().seek(pos).map_err(TaleError::from)?;
         self.current_position = new_pos;
         Ok(new_pos)
