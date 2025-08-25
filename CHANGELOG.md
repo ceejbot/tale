@@ -1,10 +1,7 @@
 # Changelog
 
-All notable changes to this project are	 documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
+All notable changes to this project are	documented in this file.
+We use [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.0] - 2025-08-17
 
@@ -47,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **File processor selection**: Clear capability-based routing
 - **Error message clarity**: Color-coded diagnostics with source location tracking
 
-## [0.1.0] - Initial Release 2025-07-30
+## [0.1.0] - 2025-07-30
 
 ### Added
 - Basic NDJSON log pretty-printing

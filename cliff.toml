@@ -2,14 +2,11 @@
 # See: https://git-cliff.org/docs/configuration
 
 [changelog]
-# changelog header
-header = """
-# Changelog
+# changelog header VERY FUSSY.
+header = """# Changelog
 
-All notable changes to this project are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to this project are	documented in this file.
+We use [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 """
 # template for the changelog body
@@ -41,69 +38,69 @@ filter_unconventional = false
 split_commits = false
 # regex for preprocessing the commit messages
 commit_preprocessors = [
-  # Replace issue numbers
-  { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/ceejbot/tale/issues/${2}))"},
-  # Clean up version tags
-  { pattern = '^v([0-9])', replace = "Release v${1}"},
+	# Replace issue numbers
+	{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](https://github.com/ceejbot/tale/issues/${2}))" },
+	# Clean up version tags
+	{ pattern = '^v([0-9])', replace = "Release v${1}" },
 ]
 # regex for parsing and grouping commits
 commit_parsers = [
-  # Versioning and releases
-  { message = "^v[0-9]", group = "<!-- 0 -->🚀 Release"},
-  { message = "^Release", group = "<!-- 0 -->🚀 Release"},
-  
-  # Features and additions  
-  { message = "^[Aa]dd", group = "<!-- 1 -->🚀 Features"},
-  { message = "^[Ff]eat", group = "<!-- 1 -->🚀 Features"},
-  { message = "^[Ii]mplement", group = "<!-- 1 -->🚀 Features"},
-  { message = "^[Ee]nable", group = "<!-- 1 -->🚀 Features"},
-  { message = "^[Ss]upport", group = "<!-- 1 -->🚀 Features"},
-  
-  # Fixes and improvements
-  { message = "^[Ff]ix", group = "<!-- 2 -->🐛 Bug Fixes"},
-  { message = "^[Rr]epair", group = "<!-- 2 -->🐛 Bug Fixes"},
-  { message = "^[Rr]esolve", group = "<!-- 2 -->🐛 Bug Fixes"},
-  { message = "^[Cc]orrect", group = "<!-- 2 -->🐛 Bug Fixes"},
-  
-  # Performance and optimizations
-  { message = "^[Oo]ptimiz", group = "<!-- 3 -->⚡ Performance"},
-  { message = "^[Pp]erf", group = "<!-- 3 -->⚡ Performance"},
-  { message = "^[Ss]peed", group = "<!-- 3 -->⚡ Performance"},
-  { message = "^[Ii]mprov.*performance", group = "<!-- 3 -->⚡ Performance"},
-  
-  # Refactoring and code quality
-  { message = "^[Rr]efactor", group = "<!-- 4 -->♻️ Refactor"},
-  { message = "^[Cc]lean", group = "<!-- 4 -->♻️ Refactor"},
-  { message = "^[Rr]eorganiz", group = "<!-- 4 -->♻️ Refactor"},
-  { message = "^[Ss]implify", group = "<!-- 4 -->♻️ Refactor"},
-  
-  # Documentation
-  { message = "^[Dd]oc", group = "<!-- 5 -->📚 Documentation"},
-  { message = "^[Uu]pdate.*README", group = "<!-- 5 -->📚 Documentation"},
-  { message = "^README", group = "<!-- 5 -->📚 Documentation"},
-  
-  # Tests
-  { message = "^[Tt]est", group = "<!-- 6 -->🧪 Testing"},
-  { message = "^[Aa]dd.*test", group = "<!-- 6 -->🧪 Testing"},
-  
-  # Dependencies and tooling
-  { message = "^[Bb]ump", group = "<!-- 7 -->📦 Dependencies"},  
-  { message = "^[Uu]pdate.*dep", group = "<!-- 7 -->📦 Dependencies"},
-  { message = "^[Aa]dd.*dep", group = "<!-- 7 -->📦 Dependencies"},
-  
-  # Build and CI
-  { message = "^[Bb]uild", group = "<!-- 8 -->🏗️ Build"},
-  { message = "^[Cc][Ii]", group = "<!-- 8 -->🏗️ Build"},
-  { message = "^[Cc]argo", group = "<!-- 8 -->🏗️ Build"},
-  
-  # Clippy and formatting - usually minor
-  { message = "^[Cc]lippy", group = "<!-- 9 -->🔧 Misc"},
-  { message = "^[Ff]mt", group = "<!-- 9 -->🔧 Misc"},
-  { message = "^[Ff]ormat", group = "<!-- 9 -->🔧 Misc"},
-  { message = "is never satisfied", group = "<!-- 9 -->🔧 Misc"},
-  
-  # Everything else gets grouped as misc
-  { message = ".*", group = "<!-- 9 -->🔧 Misc"},
+	# Versioning and releases
+	{ message = "^v[0-9]", group = "<!-- 0 -->🚀 Release" },
+	{ message = "^Release", group = "<!-- 0 -->🚀 Release" },
+
+	# Features and additions
+	{ message = "^[Aa]dd", group = "<!-- 1 -->🚀 Features" },
+	{ message = "^[Ff]eat", group = "<!-- 1 -->🚀 Features" },
+	{ message = "^[Ii]mplement", group = "<!-- 1 -->🚀 Features" },
+	{ message = "^[Ee]nable", group = "<!-- 1 -->🚀 Features" },
+	{ message = "^[Ss]upport", group = "<!-- 1 -->🚀 Features" },
+
+	# Fixes and improvements
+	{ message = "^[Ff]ix", group = "<!-- 2 -->🐛 Bug Fixes" },
+	{ message = "^[Rr]epair", group = "<!-- 2 -->🐛 Bug Fixes" },
+	{ message = "^[Rr]esolve", group = "<!-- 2 -->🐛 Bug Fixes" },
+	{ message = "^[Cc]orrect", group = "<!-- 2 -->🐛 Bug Fixes" },
+
+	# Performance and optimizations
+	{ message = "^[Oo]ptimiz", group = "<!-- 3 -->⚡ Performance" },
+	{ message = "^[Pp]erf", group = "<!-- 3 -->⚡ Performance" },
+	{ message = "^[Ss]peed", group = "<!-- 3 -->⚡ Performance" },
+	{ message = "^[Ii]mprov.*performance", group = "<!-- 3 -->⚡ Performance" },
+
+	# Refactoring and code quality
+	{ message = "^[Rr]efactor", group = "<!-- 4 -->♻️ Refactor" },
+	{ message = "^[Cc]lean", group = "<!-- 4 -->♻️ Refactor" },
+	{ message = "^[Rr]eorganiz", group = "<!-- 4 -->♻️ Refactor" },
+	{ message = "^[Ss]implify", group = "<!-- 4 -->♻️ Refactor" },
+
+	# Documentation
+	{ message = "^[Dd]oc", group = "<!-- 5 -->📚 Documentation" },
+	{ message = "^[Uu]pdate.*README", group = "<!-- 5 -->📚 Documentation" },
+	{ message = "^README", group = "<!-- 5 -->📚 Documentation" },
+
+	# Tests
+	{ message = "^[Tt]est", group = "<!-- 6 -->🧪 Testing" },
+	{ message = "^[Aa]dd.*test", group = "<!-- 6 -->🧪 Testing" },
+
+	# Dependencies and tooling
+	{ message = "^[Bb]ump", group = "<!-- 7 -->📦 Dependencies" },
+	{ message = "^[Uu]pdate.*dep", group = "<!-- 7 -->📦 Dependencies" },
+	{ message = "^[Aa]dd.*dep", group = "<!-- 7 -->📦 Dependencies" },
+
+	# Build and CI
+	{ message = "^[Bb]uild", group = "<!-- 8 -->🏗️ Build" },
+	{ message = "^[Cc][Ii]", group = "<!-- 8 -->🏗️ Build" },
+	{ message = "^[Cc]argo", group = "<!-- 8 -->🏗️ Build" },
+
+	# Clippy and formatting - usually minor
+	{ message = "^[Cc]lippy", group = "<!-- 9 -->🔧 Misc" },
+	{ message = "^[Ff]mt", group = "<!-- 9 -->🔧 Misc" },
+	{ message = "^[Ff]ormat", group = "<!-- 9 -->🔧 Misc" },
+	{ message = "is never satisfied", group = "<!-- 9 -->🔧 Misc" },
+
+	# Everything else gets grouped as misc
+	{ message = ".*", group = "<!-- 9 -->🔧 Misc" },
 ]
 # protect breaking changes from being skipped due to matching a skipping commit_parser
 protect_breaking_commits = false
