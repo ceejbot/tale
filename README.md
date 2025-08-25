@@ -2,7 +2,7 @@
 
 A tail-compatible tool for pretty-printing `ndjson` files, especially logs.
 
-All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's missing some polish and a few last small features, but is otherwise complete. f you want to cat or tail a log file with `ndjson` content, `tale` does a nice job with constant modest memory use.
+All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's missing some polish and a few last small features, but is otherwise complete. If you want to cat or tail a log file with `ndjson` content, `tale` does a nice job with constant modest memory use.
 
 ## Usage
 

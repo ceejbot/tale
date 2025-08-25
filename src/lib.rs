@@ -29,10 +29,8 @@ use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
 pub use errors::TaleError;
 pub use memory_budget::{MemoryBudget, MemoryPressure};
-pub use readers::FileProcessor;
-
-#[cfg(debug_assertions)]
-use crate::readers::Strategy;
+pub use readers::strategies::{IsStrategy, Strategy};
+pub use readers::{ChunkedFileReader, FileProcessor};
 
 #[derive(Debug, Clone, Parser, Default)]
 #[clap(name="tale", version, styles = v3_styles(), max_term_width = 100)]

@@ -1,7 +1,7 @@
 //! Logformat is not json, but it's a popular way of structuring logs that is
 //! fairly easy to parse and display nicely. It emerged from Heroku, which
 //! gave us a lot of useful service deployment practices in the form of the
-//! 12-factor app. See: https://brandur.org/logfmt
+//! 12-factor app. See: <https://brandur.org/logfmt>
 
 use std::collections::HashMap;
 

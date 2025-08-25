@@ -3,10 +3,10 @@
 
 use clap::Parser;
 use miette::Result as MietteResult;
-use tale::config::{ConfigOpts, InputMode};
+use tale_ndjson::config::{ConfigOpts, InputMode};
 #[cfg(debug_assertions)]
-use tale::json_profiler;
-use tale::{Args, config, multiplexed, readers};
+use tale_ndjson::json_profiler;
+use tale_ndjson::{Args, config, multiplexed, readers};
 
 /// Parse our options and do the thing.
 #[tokio::main]

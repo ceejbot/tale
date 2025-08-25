@@ -27,17 +27,60 @@ setup:
 	brew install fzf cargo-nextest tomato semver-bump
 	rustup install nightly
 
-# Tag a new version for release.
+# Preview what the next changelog will look like.
+changelog-preview BUMP:
+	#!/usr/bin/env bash
+	set -e
+	current=$(tomato get package.version Cargo.toml)
+	version=$(semver-bump {{BUMP}} "$current")
+	echo "Preview of changelog for v${version}:"
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	git-cliff --tag "v${version}" --unreleased
+
+# Tag a new version for release with changelog update.
 version BUMP:
 	#!/usr/bin/env bash
 	set -e
 	current=$(tomato get package.version Cargo.toml)
 	version=$(semver-bump {{BUMP}} "$current")
+
+	echo "Preparing release v${version}..."
+
+	# Update version in Cargo.toml
 	tomato set package.version "$version" Cargo.toml &> /dev/null
 	cargo generate-lockfile
-	git commit Cargo.toml Cargo.lock -m "v${version}"
-	git tag "v${version}"
-	echo "Release tagged for version v${version}"
+
+	# Generate changelog for the new version
+	echo "Generating changelog entries..."
+	git-cliff --tag "v${version}" --prepend CHANGELOG.md
+
+	# Show the generated changelog section for review
+	echo "New changelog entries:"
+	head -30 CHANGELOG.md | tail -n +9
+	echo ""
+
+	# Ask for confirmation
+	read -p "Does the changelog look good? (y/N): " -n 1 -r
+	echo
+	if [[ $REPLY =~ ^[Yy]$ ]]; then
+		# Commit everything and tag
+		git add Cargo.toml Cargo.lock CHANGELOG.md
+		git commit -m "v${version}"
+		git tag "v${version}"
+		echo "Release tagged for version v${version}"
+		echo ""
+		echo "Next steps:"
+		echo "  • Review the tag: git show v${version}"
+		echo "  • Push when ready: git push && git push --tags"
+		echo "  • Publish on crates.io: cargo publish"
+		echo "  • The workflow creates a release here"
+	else
+		# Revert changes
+		echo "❌ Reverting changes..."
+		git checkout -- Cargo.toml Cargo.lock CHANGELOG.md
+		echo "Version bump cancelled. You can edit CHANGELOG.md manually and run again."
+		exit 1
+	fi
 
 # Release by hand instead of in action.
 release:

@@ -14,10 +14,17 @@
 //! - Strategies implement IsStrategy trait for consistent interface
 //!
 //! ## Usage
-//! ```
-//! let strategy = Strategy::from_config(&config, Some(file_size));
+//! ```no_run
+//! use tale_ndjson::readers::strategies::{Strategy, IsStrategy};
+//! use tale_ndjson::config::ConfigOpts;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = ConfigOpts::default();
+//! let file_size = Some(1024 * 1024);
+//! let strategy = Strategy::from_config(&config, file_size);
 //! let chunk_size = strategy.initial_chunk_size();
-//! let new_size = strategy.adapt_size(&metrics, current_size);
+//! // let new_size = strategy.adapt_size(&metrics, current_size);
+//! # Ok(())
+//! # }
 //! ```
 
 mod adaptive;

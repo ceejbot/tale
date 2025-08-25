@@ -15,9 +15,18 @@
 //! - ChunkMetrics tracks performance for adaptive strategies
 //!
 //! ## Usage
-//! ```
+//! ```no_run
+//! use tale_ndjson::{readers::ChunkedFileReader, FileProcessor};
+//! use std::path::Path;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let path = Path::new("logfile.ndjson");
 //! let mut reader = ChunkedFileReader::new(&path)?;
-//! reader.process_lines(|line| { /* process line */ Ok(()) })?;
+//! reader.process_lines(|line| {
+//!     // process line
+//!     Ok(())
+//! })?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::fs::File;

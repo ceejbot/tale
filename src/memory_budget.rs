@@ -12,21 +12,27 @@
 //! - **Graceful degradation**: Fallback strategies under memory pressure
 //!
 //! ## Usage
-//! ```
+//! ```no_run
+//! use tale_ndjson::{MemoryBudget, MemoryPressure};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut budget = MemoryBudget::new(100 * 1024 * 1024)?; // 100MB limit
 //!
 //! // Allocate memory for a chunk
+//! let chunk_size = 4096;
 //! if let Some(allocation) = budget.try_allocate(chunk_size, "reader_1")? {
 //!     // Process with allocated memory
 //!     allocation.deallocate(); // Automatic on drop
 //! }
 //!
 //! // Check memory pressure
-//! match budget.current_pressure() {
+//! match budget.current_pressure()? {
 //!     MemoryPressure::Low => { /* normal operation */ },
+//!     MemoryPressure::Moderate => { /* mild optimization */ },
 //!     MemoryPressure::High => { /* reduce chunk sizes */ },
 //!     MemoryPressure::Critical => { /* emergency measures */ },
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use std::collections::HashMap;
