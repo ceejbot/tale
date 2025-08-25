@@ -1,6 +1,6 @@
 [package]
 name = "tale-ndjson"
-version = "0.2.2"
+version = "0.2.1"
 description = "A tail-compatible tool for pretty-printing ndjson files, especially logs."
 categories = ["command-line-utilities", "text-processing"]
 keywords = ["ndjson", "pretty-print", "logging", "json", "tail"]
@@ -50,11 +50,11 @@ rust_2018_idioms = { level = "warn", priority = 4 }
 unwrap_used = "deny"
 
 [profile.release]
-lto = true           # Enable full link-time optimization
-codegen-units = 1    # Single codegen unit for better optimization
-opt-level = 3        # Maximum optimization
-strip = true         # Strip symbols for smaller binary
-panic = "abort"      # Smaller binary, no unwinding
+lto = true        # Enable full link-time optimization
+codegen-units = 1 # Single codegen unit for better optimization
+opt-level = 3     # Maximum optimization
+strip = true      # Strip symbols for smaller binary
+panic = "abort"   # Smaller binary, no unwinding
 
 [profile.dev]
 debug-assertions = true

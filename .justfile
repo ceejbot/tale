@@ -46,18 +46,18 @@ version BUMP:
 
 	echo "Preparing release v${version}..."
 
-	# Update version in Cargo.toml
-	tomato set package.version "$version" Cargo.toml &> /dev/null
-	cargo generate-lockfile
-
 	# Generate changelog for the new version
 	echo "Generating changelog entries..."
-	git-cliff --tag "v${version}" --prepend CHANGELOG.md
+	git-cliff --tag "v${version}" --unreleased --prepend CHANGELOG.md
 
 	# Show the generated changelog section for review
 	echo "New changelog entries:"
-	head -30 CHANGELOG.md | tail -n +9
+	cat CHANGELOG.md
 	echo ""
+
+	# Update version in Cargo.toml
+	tomato set package.version "$version" Cargo.toml &> /dev/null
+	cargo generate-lockfile
 
 	# Ask for confirmation
 	read -p "Does the changelog look good? (y/N): " -n 1 -r

@@ -3,6 +3,19 @@
 All notable changes to this project are	documented in this file.
 We use [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-08-25
+
+### 🐛 Bug Fixes
+
+- Fix: Worked around a bug in git-cliff with removing headers
+
+### 🔧 Misc
+
+- Made minor release tooling tweaks to the justfile
+- Changed crate name to `tale-ndjson` to avoid collision; bin is still `tale`
+- Wrote some library use examples
+- Integrated `git-cliff` for changelog generation
+
 ## [0.2.0] - 2025-08-17
 
 ### Added
