@@ -79,6 +79,9 @@ pub struct Args {
     /// Batch window size for multi-file tailing (in milliseconds).
     #[arg(long, default_value = "250")]
     pub window: u64,
+    /// Generate completions for the given shell.
+    #[arg(long)]
+    pub completions: Option<clap_complete::Shell>,
 
     // TODO These are options we should consider making dev-only.
     /// Force use of chunked file processing for better memory efficiency on

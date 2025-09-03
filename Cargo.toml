@@ -36,6 +36,7 @@ textwrap = { version = "0.16.2", features = ["terminal_size"] }
 tempfile = "3.21"
 thiserror = "2.0.16"
 tokio = { version = "1", features = ["full"] }
+clap_complete = "4.5.57"
 
 [dev-dependencies]
 tempfile = "3.21"

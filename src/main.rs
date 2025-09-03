@@ -2,6 +2,7 @@
 //! set of options and behaviors.
 
 use clap::Parser;
+use clap_complete::generate;
 use miette::Result as MietteResult;
 use tale_ndjson::config::{ConfigOpts, InputMode};
 #[cfg(debug_assertions)]
@@ -13,6 +14,13 @@ use tale_ndjson::{Args, config, multiplexed, readers};
 async fn main() -> MietteResult<()> {
     // the args struct is defined in lib.rs for various reasons
     let args = Args::parse();
+
+    if let Some(shell) = args.completions {
+        use clap::CommandFactory;
+        let mut app = Args::command();
+        generate(shell, &mut app, "tale", &mut std::io::stdout());
+        return Ok(());
+    }
 
     let config = ConfigOpts::new(&args).unwrap_or_else(|e| {
         eprintln!("Configuration error: {}", e);
