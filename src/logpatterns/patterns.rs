@@ -375,8 +375,21 @@ impl<'a> PrettyPrintable for &Message<'a> {
         }
 
         let status = if let Some(ref v) = self.status {
-            // TODO transform this into `200 OK` or similar canonical form
-            v.to_string()
+            // Transform numeric status codes to include reason phrase
+            match v.parse::<u16>() {
+                Ok(200) => "200 OK".to_string(),
+                Ok(201) => "201 Created".to_string(),
+                Ok(204) => "204 No Content".to_string(),
+                Ok(400) => "400 Bad Request".to_string(),
+                Ok(401) => "401 Unauthorized".to_string(),
+                Ok(403) => "403 Forbidden".to_string(),
+                Ok(404) => "404 Not Found".to_string(),
+                Ok(405) => "405 Method Not Allowed".to_string(),
+                Ok(500) => "500 Internal Server Error".to_string(),
+                Ok(502) => "502 Bad Gateway".to_string(),
+                Ok(503) => "503 Service Unavailable".to_string(),
+                _ => v.to_string(), // Keep original if not a recognized code
+            }
         } else {
             String::default()
         };
@@ -947,7 +960,7 @@ mod tests {
         let parsed =
             serde_json::from_str::<Printable<'_>>(logline).expect("the HTTP patch message is a valid log line");
         let Printable::Canonical(canonical) = parsed else {
-            panic!("we expected a canonical log line")
+            panic!("Expected Canonical variant, got: {:#?}", parsed)
         };
         assert_eq!(canonical.message, "HTTP PATCH /api/auth/login");
     }
@@ -968,7 +981,7 @@ mod tests {
         let parsed =
             serde_json::from_str::<Printable<'_>>(logline).expect("the HTTP patch message is a valid log line");
         let Printable::Java(java) = parsed else {
-            panic!("we expected a java log line")
+            panic!("Expected Java variant, got: {:#?}", parsed)
         };
         assert_eq!(java.message, "I like drinking coffee in the morning.");
     }
@@ -1241,14 +1254,14 @@ mod tests {
         // Should maintain original order due to stable sort with identical timestamps
         // first
         let Printable::TimeOnly(ref has_stamp) = sorted[0].parsed else {
-            panic!("that really should have parsed as having a timestamp");
+            panic!("Expected TimeOnly variant for sorted[0], got: {:#?}", sorted[0].parsed)
         };
         let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
         assert_eq!(has_stamp.timestamp, ts_parsed);
 
         // second
         let Printable::TimeOnly(ref has_stamp) = sorted[1].parsed else {
-            panic!("that really should have parsed as having a timestamp");
+            panic!("Expected TimeOnly variant for sorted[1], got: {:#?}", sorted[1].parsed)
         };
         let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
         assert_eq!(has_stamp.timestamp, ts_parsed);
@@ -1258,7 +1271,7 @@ mod tests {
 
         // third
         let Printable::TimeOnly(ref has_stamp) = sorted[2].parsed else {
-            panic!("that really should have parsed as having a timestamp");
+            panic!("Expected TimeOnly variant for sorted[2], got: {:#?}", sorted[2].parsed)
         };
         let ts_parsed = Timestamp::from_str("2025-08-01T10:00:00Z").expect("timestamp is parsable");
         assert_eq!(has_stamp.timestamp, ts_parsed);

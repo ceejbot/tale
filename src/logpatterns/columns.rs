@@ -434,9 +434,11 @@ mod tests {
                     if ch == ' ' {
                         space_count += 1;
                     } else {
-                        if space_count == 1 {
-                            panic!("Line {} has single space (should be 2+ for padding): {}", i, line);
-                        }
+                        assert_ne!(
+                            space_count, 1,
+                            "Line {} has single space (should be 2+ for padding): {}",
+                            i, line
+                        );
                         space_count = 0;
                     }
                 }

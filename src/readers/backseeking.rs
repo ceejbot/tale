@@ -11,6 +11,7 @@ use bytes::BytesMut;
 use miette::IntoDiagnostic;
 
 use super::FileProcessor;
+use crate::config::OffsetUnit;
 use crate::defaults::io::*;
 use crate::defaults::processing::*;
 use crate::errors::TaleError;
@@ -25,26 +26,27 @@ pub struct BackSeekingProcessor<'a> {
     count: u16,
 }
 
-// TODO: finish implementing the trait; clean up.
 impl<'a> FileProcessor for BackSeekingProcessor<'a> {
-    fn process_lines<F>(&mut self, _line_processor: F) -> Result<(), TaleError>
+    fn process_lines<F>(&mut self, mut line_processor: F) -> Result<(), TaleError>
     where
         F: FnMut(&str) -> Result<(), TaleError>,
     {
-        let _temp_buffer = BytesMut::with_capacity(OUTPUT_BUFFER_CAPACITY);
-        let _temp_outlock = io::stdout().lock();
+        // Open file and read all lines, calling processor for each
+        let file = File::open(&self.fpath)?;
+        let reader = BufReader::new(file);
 
-        // process_line()
+        for line in reader.lines() {
+            let line = line?;
+            line_processor(&line)?;
+        }
 
-        // Use existing tail() logic but intercept lines before output
-        // This would require refactoring tail() to be more modular
-        todo!("Refactor existing tail() method to support callback-based processing")
+        Ok(())
     }
 
-    fn skip_lines(&mut self, _count: u64) -> Result<(), TaleError> {
-        // BackSeekingProcessor already handles this via move_to_position
-        // Could extract the line-skipping logic from there
-        todo!("Implement using existing offset logic")
+    fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
+        // Use existing move_to_position logic for line-based offsets
+        self.move_to_position(count as i64, OffsetUnit::Lines, false)?;
+        Ok(())
     }
 
     fn file_size(&self) -> u64 {
@@ -278,7 +280,8 @@ impl<'a> BackSeekingProcessor<'a> {
         let mut file = reader.into_inner();
         let mut file_position = file.stream_position().into_diagnostic()?;
 
-        // polling loop. TODO consider better impl
+        // Polling loop for file growth detection
+        // Note: Could be enhanced with inotify/file system events for efficiency
         loop {
             std::thread::sleep(Duration::from_millis(100));
 

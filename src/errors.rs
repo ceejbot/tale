@@ -324,7 +324,7 @@ mod tests {
                 assert!(!suggestions.is_empty());
                 assert_eq!(suggestions.len(), 1);
             }
-            _ => panic!("Wrong error type created"),
+            _ => panic!("Expected FileNotFound error variant, got different error type"),
         }
     }
 }

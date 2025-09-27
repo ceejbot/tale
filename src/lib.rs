@@ -83,7 +83,7 @@ pub struct Args {
     #[arg(long)]
     pub completions: Option<clap_complete::Shell>,
 
-    // TODO These are options we should consider making dev-only.
+    // Performance and memory tuning options
     /// Force use of chunked file processing for better memory efficiency on
     /// large files.
     #[arg(long)]

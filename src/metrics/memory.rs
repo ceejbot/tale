@@ -4,17 +4,15 @@
 //! splits a family in two
 //! puts people on streets
 
-#[cfg(test)]
-pub use crate::tests::simulation::mock_mem_impl as memimpl;
-
-#[cfg(test)]
-pub use crate::tests::simulation::mock_mem_impl::*;
-
 #[cfg(not(test))]
 pub use memimpl::*;
 
 #[cfg(not(test))]
 use crate::defaults::memory::MEMORY_LIMIT_BYTES;
+#[cfg(test)]
+pub use crate::tests::simulation::mock_mem_impl as memimpl;
+#[cfg(test)]
+pub use crate::tests::simulation::mock_mem_impl::*;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryPressure {

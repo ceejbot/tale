@@ -19,9 +19,8 @@ Pre-release Testing notes
   - Windows (future - via WSL initially?)
 */
 
-use std::io;
-use std::thread;
 use std::time::Duration;
+use std::{io, thread};
 
 pub trait _IoSimulator {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;

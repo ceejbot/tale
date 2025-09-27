@@ -25,6 +25,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cargo clippy` - Run linter (configured to deny `unwrap_used`)
 - `cargo fmt` - Format code
 
+### Tools for shell interactions
+
+Install via homebrew if these are missing.
+
+- Is it about finding FILES? use `fd`
+- Is it about finding TEXT/strings? use `rg`
+- Is it about finding CODE STRUCTURE? use `ast-grep`
+- Is it about SELECTING from multiple results? pipe to `fzf`
+- Is it about interacting with JSON? use `jq`
+- Is it about interacting with YAML or XML? use `yq`
+- Is it about interacting with TOML? use `tomato`
+- Is it about FINDING and REPLACING text by pattern in files? use `sd`
+
 ## Code Architecture
 
 ### Core Structure
@@ -255,7 +268,7 @@ The application is highly optimized and fully functional with:
 2. **Source file display integration** - Add file names to multi-file output
 3. **Advanced memory management** - Implement temp file fallback for large negative line offsets
 
-### Long-term (Low Priority)  
+### Long-term (Low Priority)
 1. **Performance optimizations** - Profile and optimize remaining bottlenecks
 2. **Additional offset modes** - Consider time-based offsets for log analysis
 3. **Enhanced format support** - Add support for other structured log formats
@@ -274,7 +287,7 @@ The application is highly optimized and fully functional with:
 **FileChunk Architecture Phase 1 Completed**:
 - Renamed `SimpleFileProcessor` → `BackSeekingProcessor` for clarity
 - Renamed `single.rs` → `backseeking.rs` to match processor purpose
-- Fixed `skip_lines()` implementation in `ChunkedFileReader` 
+- Fixed `skip_lines()` implementation in `ChunkedFileReader`
   - Properly handles partial chunk consumption
   - Maintains correct pending_data state
   - Added comprehensive test coverage
@@ -286,11 +299,11 @@ The application is highly optimized and fully functional with:
 **Module Organization Improvements**:
 - Clear separation between processor types:
   - `BufferedFileProcessor`: Simple forward reading for small files
-  - `ChunkedFileReader`: Memory-efficient processing for large files  
+  - `ChunkedFileReader`: Memory-efficient processing for large files
   - `BackSeekingProcessor`: Handles backward seeking for tail-like behavior
 - Each processor has a single, well-defined purpose
 
-**Tests Added**: 
+**Tests Added**:
 - Chunked skip_lines with boundary conditions
 - Partial chunk consumption
 - All 10 reader tests passing
@@ -311,7 +324,7 @@ The application is highly optimized and fully functional with:
   - Reduced complexity and warning messages
 - **Documentation improvements**: Clarified reader hierarchy
   - BufferedFileProcessor: Simple forward-only reading for small files
-  - ChunkedFileReader: Memory-efficient processing with Strategy adaptation  
+  - ChunkedFileReader: Memory-efficient processing with Strategy adaptation
   - BackSeekingProcessor: Handles backward seeking and tail functionality
   - Clear processor selection logic in create_file_processor()
 
