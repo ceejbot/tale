@@ -9,7 +9,7 @@ use jiff::Timestamp;
 mod adaptation;
 mod budget;
 mod integration;
-mod simulation;
+pub mod simulation;
 
 /// Different log patterns for generating realistic test data
 #[derive(Debug, Clone, Copy)]

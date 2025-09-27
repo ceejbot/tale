@@ -23,7 +23,7 @@ struct MemoryCache {
 impl MemoryCache {
     fn get_pressure(&mut self) -> MemoryPressure {
         // Only check every 1 second
-        if self.last_check.elapsed() > Duration::from_secs(1) {
+        if matches!(self.last_pressure, MemoryPressure::Unknown) || self.last_check.elapsed() > Duration::from_secs(1) {
             self.last_pressure = detect_memory_pressure(None);
             self.last_check = Instant::now();
         }

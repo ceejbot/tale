@@ -4,8 +4,16 @@
 //! splits a family in two
 //! puts people on streets
 
+#[cfg(test)]
+pub use crate::tests::simulation::mock_mem_impl as memimpl;
+
+#[cfg(test)]
+pub use crate::tests::simulation::mock_mem_impl::*;
+
+#[cfg(not(test))]
 pub use memimpl::*;
 
+#[cfg(not(test))]
 use crate::defaults::memory::MEMORY_LIMIT_BYTES;
 
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +42,7 @@ impl From<f64> for MemoryPressure {
     }
 }
 
+#[cfg(not(test))]
 pub mod memimpl {
     use std::sync::{LazyLock, Mutex, OnceLock};
 
