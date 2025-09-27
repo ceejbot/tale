@@ -22,10 +22,22 @@ impl IsStrategy for ConservativeStrategy {
         match detect_memory_pressure(max) {
             MemoryPressure::Unknown => current_size,
             MemoryPressure::None => current_size,
-            MemoryPressure::Low => todo!(),
-            MemoryPressure::Medium => todo!(),
-            MemoryPressure::High => todo!(),
-            MemoryPressure::Critical => todo!(),
+            MemoryPressure::Low => {
+                // Slight reduction to be conservative
+                std::cmp::max(current_size * 9 / 10, Self::MIN_CHUNK_SIZE)
+            }
+            MemoryPressure::Medium => {
+                // Moderate reduction
+                std::cmp::max(current_size * 3 / 4, Self::MIN_CHUNK_SIZE)
+            }
+            MemoryPressure::High => {
+                // Significant reduction
+                std::cmp::max(current_size / 2, Self::MIN_CHUNK_SIZE)
+            }
+            MemoryPressure::Critical => {
+                // Drop to minimum to avoid OOM
+                Self::MIN_CHUNK_SIZE
+            }
         }
     }
 
@@ -34,6 +46,12 @@ impl IsStrategy for ConservativeStrategy {
     fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
         metrics.should_adapt(self.config.interval)
     }
+}
+
+impl ConservativeStrategy {
+    /// Minimum chunk size we're willing to use - 4KB should be enough to read a
+    /// few lines efficiently
+    const MIN_CHUNK_SIZE: usize = 4 * 1024;
 }
 
 #[derive(Debug, Clone, Default)]

@@ -31,21 +31,27 @@ impl<'a> FileProcessor for BackSeekingProcessor<'a> {
     where
         F: FnMut(&str) -> Result<(), TaleError>,
     {
-        // Open file and read all lines, calling processor for each
-        let file = File::open(&self.fpath)?;
-        let reader = BufReader::new(file);
+        // Leverage existing positioning logic but start from beginning
+        let file = self.move_to_position(0, OffsetUnit::Lines, false)?;
+        let mut reader = BufReader::new(file);
 
-        for line in reader.lines() {
-            let line = line?;
-            line_processor(&line)?;
+        // Process all lines using the efficient line reading approach from tail()
+        let mut line = String::with_capacity(LINE_CAPACITY);
+        while reader.read_line(&mut line)? != 0 {
+            strip_line_ending(&mut line);
+            line_processor(line.as_str())?;
+            line.clear();
         }
 
         Ok(())
     }
 
     fn skip_lines(&mut self, count: u64) -> Result<(), TaleError> {
-        // Use existing move_to_position logic for line-based offsets
-        self.move_to_position(count as i64, OffsetUnit::Lines, false)?;
+        // Use existing move_to_position logic for efficient line-based positioning
+        let file = self.move_to_position(count as i64, OffsetUnit::Lines, false)?;
+
+        // Update our internal file state to reflect the skip
+        self.file = Some(file);
         Ok(())
     }
 
