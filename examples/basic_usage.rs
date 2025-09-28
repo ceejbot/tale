@@ -7,10 +7,13 @@ use std::io::Write;
 use std::path::Path;
 
 use tale_ndjson::readers::{BufferedFileProcessor, ChunkedFileReader};
-use tale_ndjson::{FileProcessor, TaleError};
+use tale_ndjson::{FileProcessor, TaleError, config};
 use tempfile::NamedTempFile;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration required by the library
+    tale_ndjson::config::set(config::ConfigOpts::default()).expect("Failed to initialize config");
+
     println!("Tale NDJSON Processing Example");
 
     // Create a sample NDJSON log file

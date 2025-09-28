@@ -15,6 +15,9 @@ use tale_ndjson::metrics::ChunkMetrics;
 use tale_ndjson::readers::strategies::{AdaptiveStrategy, IsStrategy, Strategy};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration required by the library
+    tale_ndjson::config::set(ConfigOpts::default()).expect("Failed to initialize config");
+
     println!("Strategy Pattern Example");
 
     // Create different file scenarios

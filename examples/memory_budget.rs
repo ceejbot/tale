@@ -3,9 +3,12 @@
 //! This example shows how to use the MemoryBudget system to track
 //! and manage memory usage during file processing.
 
-use tale_ndjson::{MemoryBudget, MemoryPressure, TaleError};
+use tale_ndjson::{MemoryBudget, MemoryPressure, TaleError, config};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration required by the library
+    tale_ndjson::config::set(config::ConfigOpts::default()).expect("Failed to initialize config");
+
     println!("Memory Budget Management Example");
 
     // Create a memory budget with 10MB limit

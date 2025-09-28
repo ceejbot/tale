@@ -2,7 +2,7 @@
 
 A tail-compatible tool for pretty-printing `ndjson` files, especially logs.
 
-All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's missing some polish and a few last small features, but is otherwise complete. If you want to cat or tail a log file with `ndjson` content, `tale` does a nice job with constant modest memory use.
+All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's missing some polish and a few last small features, but is otherwise complete. If you want to cat or tail a log file with `ndjson` content, `tale` does a nice job with constant modest memory use. If you want to tail lots of of them, `tale`'s memory use scales
 
 ## Usage
 
@@ -81,9 +81,11 @@ I have no plans to do any of the other `tail` options. Uh. Other than multi-file
 
 ## Notes
 
-On my Macbook `tale` will pretty-print a million-line file at an approx rate of 387K lines/sec using just under 4MB of memory, steady. Claude Code wrote benchmark tools including a test data generator; find them in the [benches](./benches) directory. I should try to source real-world data to test with, however, because I think they will provide better results. Real-world data is way more consistent than the test data is. Tale is CPU-bound on json deserialization, and it is fastest when deserializing into well-understood logging patterns.
+On my Macbook `tale` will pretty-print a million-line file at an approx rate of 387K lines/sec using just under 4MB of memory, steady.
 
-To that point: If there is a specific json logging pattern you use that `tale` does not support directly, please give me some samples-- anonymized if you prefer-- and I'll implement deserialization and pretty-printing specifically for that pattern. Though honestly it's fast enough.
+Tale has a set of benchmarks (`cargo bench`) and is optimized for both speed and memory efficiency with adaptive chunking strategies that automatically adjust to system resources and file characteristics. There are test generator scripts to help with this. `tale` behaves less well with those than with real-world log data.bReal-world data is way more consistent than the test data is. Tale is CPU-bound on json deserialization, and it is fastest when deserializing into well-understood logging patterns.
+
+To that point: If there is a specific json logging pattern you use that `tale` does not support directly, please give me some samples-- anonymized if you prefer-- and I'll implement deserialization and pretty-printing specifically for that pattern. It's more than fast enough, however, and it's just memory use I watch carefully.
 
 There is fairly stupid single-pass layout approach to print in columns the key/value pairs I don't have an opinion. It isn't very pretty because it is single-pass. There is hand-tweaked formatting for the keys I do have an opinion about.
 
