@@ -11,7 +11,6 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 
 use crate::defaults::io::*;
 use crate::defaults::memory::*;
-use crate::defaults::processing::BLOCK_SIZE;
 use crate::{config, process_line, strip_line_ending};
 
 /// Entry point for processing stdin all the ways we need to handle it.
@@ -29,15 +28,10 @@ pub fn handle_stdin() -> Result<()> {
         // Positive offsets: skip first N units
         (true, config::OffsetUnit::Lines) => processor.skip_lines(offset as u64),
         (true, config::OffsetUnit::Bytes) => processor.skip_bytes(offset as u64),
-        (true, config::OffsetUnit::Blocks) => {
-            let bytes_to_skip = (offset as u64) * BLOCK_SIZE;
-            processor.skip_bytes(bytes_to_skip)
-        }
 
         // Negative offsets: show last N units
         (false, config::OffsetUnit::Lines) => processor.backtrack_lines((-offset) as u64),
         (false, config::OffsetUnit::Bytes) => processor.backtrack_bytes((-offset) as u64),
-        (false, config::OffsetUnit::Blocks) => processor.backtrack_bytes(((-offset) as u64) * BLOCK_SIZE),
     }
 }
 

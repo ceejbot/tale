@@ -27,7 +27,6 @@ pub struct ConfigOpts {
 pub enum OffsetUnit {
     #[default]
     Lines,
-    Blocks,
     Bytes,
 }
 
@@ -357,9 +356,7 @@ impl ConfigOpts {
             }
         };
 
-        let (offset, offset_unit) = if let Some(blocks) = args.blocks {
-            (blocks, OffsetUnit::Blocks)
-        } else if let Some(bytes) = args.bytes {
+        let (offset, offset_unit) = if let Some(bytes) = args.bytes {
             (bytes, OffsetUnit::Bytes)
         } else if let Some(lines) = args.offset {
             (lines, OffsetUnit::Lines)
@@ -640,7 +637,7 @@ mod tests {
             tailing: true,
             sticky: true,
             offset: -100,
-            offset_unit: OffsetUnit::Blocks,
+            offset_unit: OffsetUnit::Bytes,
             show_time: true,
             batch_window_ms: 1000,
             mode: InputMode::SingleFile {
@@ -657,7 +654,7 @@ mod tests {
             assert!(tailing());
             assert!(sticky());
             assert_eq!(offset(), -100);
-            assert!(matches!(offset_unit(), OffsetUnit::Blocks));
+            assert!(matches!(offset_unit(), OffsetUnit::Bytes));
             assert!(show_time());
             assert_eq!(batch_window_ms(), 1000);
             assert!(matches!(mode(), InputMode::SingleFile { .. }));

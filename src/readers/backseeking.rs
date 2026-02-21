@@ -13,7 +13,6 @@ use miette::IntoDiagnostic;
 use super::FileProcessor;
 use crate::config::OffsetUnit;
 use crate::defaults::io::*;
-use crate::defaults::processing::*;
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
@@ -141,18 +140,6 @@ impl<'a> BackSeekingProcessor<'a> {
                     file.seek(io::SeekFrom::End(offset))?;
                 } else if tailing {
                     // Zero offset: start from the end
-                    file.seek(io::SeekFrom::End(0))?;
-                }
-            }
-            config::OffsetUnit::Blocks => {
-                // This case is the as above, but we multiply offset by block size.
-                if offset > 0 {
-                    let byte_offset = (offset as u64) * BLOCK_SIZE;
-                    file.seek(io::SeekFrom::Start(byte_offset))?;
-                } else if offset < 0 {
-                    let byte_offset = offset * (BLOCK_SIZE as i64);
-                    file.seek(io::SeekFrom::End(byte_offset))?;
-                } else if tailing {
                     file.seek(io::SeekFrom::End(0))?;
                 }
             }

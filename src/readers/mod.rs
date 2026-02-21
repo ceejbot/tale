@@ -251,7 +251,7 @@ pub fn create_file_processor<P: AsRef<Path>>(
     // This is the only reader that can handle negative block and byte offsets, and
     // it already handles them reasonably (though its chunks might not be
     // optimal). This is something I need to refactor away.
-    if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes | config::OffsetUnit::Blocks) {
+    if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes) {
         let processor = BackSeekingProcessor::new(PathBuf::from(path));
         return Ok(FileProcessorType::BackSeeking(processor));
     }
@@ -413,26 +413,7 @@ mod tests {
             },
         );
 
-        // Test 3: Block offset units always use Simple processor
-        crate::config::with_config(
-            ConfigOpts {
-                offset: 100,
-                offset_unit: config::OffsetUnit::Blocks,
-                force_chunked: false,
-                disable_chunked: false,
-                ..ConfigOpts::default()
-            },
-            || {
-                let result = create_file_processor(&testfp, Some(1_000_000_000))
-                    .expect("should create processor for block offset");
-                assert!(
-                    matches!(result, FileProcessorType::BackSeeking(_)),
-                    "Block offset should use Simple processor"
-                );
-            },
-        );
-
-        // Test 4: force_chunked=true uses Chunked processor (when not disabled)
+        // Test 3: force_chunked=true uses Chunked processor (when not disabled)
         crate::config::with_config(
             ConfigOpts {
                 offset: 100,

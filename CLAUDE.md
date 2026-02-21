@@ -139,10 +139,11 @@ The application is organized into specialized modules and a readers subsystem:
 - Enum size optimized from 360 → ~40 bytes via boxing
 
 **BackSeekingProcessor struct** - Handles backward seeking and tail-like behavior:
-- Specialized for negative offsets and byte/block-based operations
+- Specialized for negative offsets and byte-based operations
 - Efficient backward line seeking without loading entire file
 - Memory-bounded approach for large files
-- Supports all tail offset modes: lines, bytes, blocks (positive and negative)
+- Supports tail offset modes: lines and bytes (positive and negative)
+- `-b`/`--blocks` is accepted for `tail` compatibility but ignored
 - Primary processor for traditional tail functionality
 
 **StdinProcessor struct** - Consolidated stdin processing patterns:
@@ -242,10 +243,11 @@ The application is highly optimized and fully functional with:
   - Memory pressure detection and response
   - Comprehensive benchmark suite with Criterion
 - ✅ **Complete stdin offset support** matching `tail` behavior:
-  - Positive offsets: `-n +N`, `-c +N`, `-b +N` (skip first N units)
-  - Negative offsets: `-n -N`, `-c -N`, `-b -N` (show last N units)
+  - Positive offsets: `-n +N`, `-c +N` (skip first N units)
+  - Negative offsets: `-n -N`, `-c -N` (show last N units)
+  - `-b`/`--blocks` accepted for compatibility but ignored
   - All offset modes work with stdin and files
-  - Memory-bounded circular buffers for bytes/blocks
+  - Memory-bounded circular buffers for bytes
   - Adaptive VecDeque for lines with 10MB memory limit
 - ✅ **StdinProcessor refactor** (completed 2025-01-08):
   - All stdin processing consolidated into clean `StdinProcessor` struct

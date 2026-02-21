@@ -55,7 +55,7 @@ pub struct Args {
     /// from the beginning if and when it is created.
     #[arg(short = 'F', long)]
     pub sticky: bool,
-    /// Start tailing the input offset by ±N blocks.
+    /// Accepted for `tail` compatibility but ignored (use -c for byte offsets).
     #[arg(short, long, group = "units")]
     pub blocks: Option<i64>,
     /// Start tailing the input offset by ±N bytes; e.g., to skip garbage.
@@ -77,23 +77,23 @@ pub struct Args {
     #[arg(short, long)]
     pub timestamps: bool,
     /// Batch window size for multi-file tailing (in milliseconds).
-    #[arg(long, default_value = "250")]
+    #[arg(long, default_value = "250", hide = true)]
     pub window: u64,
     /// Generate completions for the given shell.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub completions: Option<clap_complete::Shell>,
 
     // Performance and memory tuning options
     /// Force use of chunked file processing for better memory efficiency on
     /// large files.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub chunked: bool,
     /// Disable chunked file processing and always use streaming (might use more
     /// memory).
-    #[arg(long, conflicts_with = "chunked")]
+    #[arg(long, conflicts_with = "chunked", hide = true)]
     pub no_chunked: bool,
     /// Set a limit on how much memory can be used in file buffers
-    #[arg(short, long)]
+    #[arg(short, long, hide = true)]
     pub max_memory: Option<usize>,
     /// Print JSON parsing profile report after processing (debug builds only)
     #[cfg(debug_assertions)]
@@ -178,16 +178,6 @@ mod cli_tests {
         let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert!(matches!(config.offset_unit, OffsetUnit::Bytes));
         assert_eq!(config.offset, 100);
-
-        // Test blocks offset detection
-        let args = Args {
-            blocks: Some(2),
-            args: vec!["test.log".to_string()],
-            ..Default::default()
-        };
-        let config = ConfigOpts::new(&args).expect("Config should be valid for test");
-        assert!(matches!(config.offset_unit, OffsetUnit::Blocks));
-        assert_eq!(config.offset, 2);
 
         // Test lines offset detection (default)
         let args = Args {

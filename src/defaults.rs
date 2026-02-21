@@ -41,12 +41,6 @@ pub mod processing {
 
     /// File size that always requires chunked processing regardless of offset
     pub const ALWAYS_CHUNKED_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
-
-    /// Number of chunks between strategy adaptation checks
-    pub const ADAPTATION_INTERVAL: usize = 20;
-
-    /// The traditional unix block size in bytes.
-    pub const BLOCK_SIZE: u64 = 512;
 }
 
 /// Memory management constants
@@ -124,15 +118,6 @@ impl SystemDefaults {
         base_size.div_ceil(BLOCK_SIZE) * BLOCK_SIZE
     }
 
-    /// Get default strategy based on context
-    pub fn default_strategy() -> &'static str {
-        // Conservative strategy proved best in benchmarks:
-        // - Only 20% slower than adaptive in best case
-        // - Much more predictable memory usage
-        // - Better handling of memory pressure
-        "conservative"
-    }
-
     /// Should use chunked processing by default?
     pub fn should_chunk_by_default(file_size: u64) -> bool {
         // Use chunked processing for files > 1MB
@@ -149,23 +134,11 @@ impl SystemDefaults {
     /// Default output buffer capacity
     pub const DEFAULT_OUTPUT_BUFFER_CAPACITY: usize = 4096;
 
-    /// Adaptation interval (chunks between adaptation checks)
-    pub const ADAPTATION_INTERVAL: usize = 20;
-
     /// Memory pressure thresholds (validated through benchmarking)
     pub const MEMORY_PRESSURE_LOW_THRESHOLD: f64 = 0.60; // < 60%: Normal
     pub const MEMORY_PRESSURE_MODERATE_THRESHOLD: f64 = 0.85; // 60-85%: Moderate
     pub const MEMORY_PRESSURE_HIGH_THRESHOLD: f64 = 0.95; // 85-95%: High
     // > 95%: Critical
-
-    /// Chunk size reduction factors per pressure level
-    pub const PRESSURE_FACTOR_LOW: f64 = 1.0; // No reduction
-    pub const PRESSURE_FACTOR_MODERATE: f64 = 0.8; // 20% reduction
-    pub const PRESSURE_FACTOR_HIGH: f64 = 0.5; // 50% reduction
-    pub const PRESSURE_FACTOR_CRITICAL: f64 = 0.25; // 75% reduction
-
-    /// Emergency allocation factor
-    pub const EMERGENCY_ALLOCATION_FACTOR: f64 = 0.25; // 25% of requested size
 }
 
 /// System configuration presets
@@ -184,11 +157,7 @@ pub enum ConfigPreset {
 pub struct PresetSettings {
     pub memory_percentage: f64,
     pub max_memory_mb: usize,
-    pub default_chunk_kb: usize,
-    pub max_chunk_kb: usize,
-    pub strategy: &'static str,
     pub force_chunked: bool,
-    pub adaptation_interval: usize,
 }
 
 impl ConfigPreset {
@@ -198,41 +167,25 @@ impl ConfigPreset {
             ConfigPreset::LowMemory => PresetSettings {
                 memory_percentage: 5.0,
                 max_memory_mb: 50,
-                default_chunk_kb: 16,
-                max_chunk_kb: 256,
-                strategy: "conservative",
                 force_chunked: true,
-                adaptation_interval: 10,
             },
 
             ConfigPreset::Balanced => PresetSettings {
                 memory_percentage: 10.0,
                 max_memory_mb: 200,
-                default_chunk_kb: 32,
-                max_chunk_kb: 2048,
-                strategy: "conservative",
                 force_chunked: false,
-                adaptation_interval: 20,
             },
 
             ConfigPreset::HighPerformance => PresetSettings {
                 memory_percentage: 20.0,
                 max_memory_mb: 500,
-                default_chunk_kb: 128,
-                max_chunk_kb: 4096,
-                strategy: "adaptive",
                 force_chunked: false,
-                adaptation_interval: 30,
             },
 
             ConfigPreset::Conservative => PresetSettings {
                 memory_percentage: 5.0,
                 max_memory_mb: 100,
-                default_chunk_kb: 16,
-                max_chunk_kb: 512,
-                strategy: "static",
                 force_chunked: true,
-                adaptation_interval: 10,
             },
         }
     }
@@ -325,17 +278,14 @@ mod tests {
     fn presets_are_as_expected() {
         let low_mem = ConfigPreset::LowMemory.settings();
         assert_eq!(low_mem.memory_percentage, 5.0);
-        assert_eq!(low_mem.strategy, "conservative");
         assert!(low_mem.force_chunked);
 
         let balanced = ConfigPreset::Balanced.settings();
         assert_eq!(balanced.memory_percentage, 10.0);
-        assert_eq!(balanced.strategy, "conservative");
         assert!(!balanced.force_chunked);
 
         let high_perf = ConfigPreset::HighPerformance.settings();
         assert_eq!(high_perf.memory_percentage, 20.0);
-        assert_eq!(high_perf.strategy, "adaptive");
         assert!(!high_perf.force_chunked);
     }
 
@@ -347,7 +297,6 @@ mod tests {
         assert_eq!(LARGE_OFFSET_THRESHOLD, 10_000);
         assert_eq!(CHUNKED_WITH_OFFSET_FILE_SIZE, 100 * 1024 * 1024);
         assert_eq!(ALWAYS_CHUNKED_FILE_SIZE, 1024 * 1024 * 1024);
-        assert_eq!(ADAPTATION_INTERVAL, 20);
     }
 
     #[test]
