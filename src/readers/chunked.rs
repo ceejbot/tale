@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 
 use super::FileProcessor;
 use super::strategies::Strategy;
+use crate::defaults::processing::ADAPTATION_INTERVAL;
 use crate::errors::TaleError;
 use crate::memory_budget::{MemoryAllocation, MemoryBudget, MemoryPressure};
 use crate::metrics::*;
@@ -231,9 +232,7 @@ impl ChunkedFileReader {
         }
 
         // Let strategy adapt if needed
-        if self.metrics.chunks_seen % crate::defaults::processing::ADAPTATION_INTERVAL == 0
-            && self.strategy.should_adapt(&self.metrics)
-        {
+        if self.metrics.chunks_seen.is_multiple_of(ADAPTATION_INTERVAL) && self.strategy.should_adapt(&self.metrics) {
             let current_size = self.strategy.initial_chunk_size();
             self.strategy.adapt_size(&self.metrics, current_size);
         }

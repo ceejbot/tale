@@ -147,16 +147,16 @@ fn generate_message_log(index: usize, timestamp: i64) -> String {
     // Add some realistic additional fields with variation
     let mut extra_fields = Vec::new();
 
-    if index % 3 == 0 {
+    if index.is_multiple_of(3) {
         extra_fields.push(format!(r#""user_id":{}"#, 1000 + (index % 9999)));
     }
-    if index % 4 == 0 {
+    if index.is_multiple_of(4) {
         extra_fields.push(format!(r#""duration":"{}ms""#, 1 + (index % 100)));
     }
-    if index % 5 == 0 {
-        extra_fields.push(format!(r#""cache_hit":{}"#, index % 2 == 0));
+    if index.is_multiple_of(5) {
+        extra_fields.push(format!(r#""cache_hit":{}"#, index.is_multiple_of(2)));
     }
-    if index % 7 == 0 {
+    if index.is_multiple_of(7) {
         extra_fields.push(format!(r#""memory_usage":"{}MB""#, 10 + (index % 90)));
     }
 
@@ -192,7 +192,7 @@ fn generate_java_log(index: usize, timestamp: i64) -> String {
     let class = classes[index % classes.len()];
 
     // Every 20th line gets a stack trace for ERROR/WARN
-    let has_stack_trace = index % 20 == 0 && (level == "ERROR" || level == "WARN");
+    let has_stack_trace = index.is_multiple_of(20) && (level == "ERROR" || level == "WARN");
 
     let message = if has_stack_trace {
         format!(

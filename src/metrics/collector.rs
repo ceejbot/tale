@@ -39,7 +39,9 @@ impl MetricsCollector {
     }
 
     pub fn ready_to_adapt(&self, interval: usize) -> bool {
-        self.metrics.chunks_seen > 0 && self.metrics.chunks_seen % interval == 0 && self.metrics.lines_moving.count >= 3
+        self.metrics.chunks_seen > 0
+            && self.metrics.chunks_seen.is_multiple_of(interval)
+            && self.metrics.lines_moving.count >= 3
     }
 
     pub fn snapshot(&self) -> &ChunkMetrics {
@@ -150,7 +152,7 @@ impl ChunkMetrics {
     /// adapt", not "we should definitely adapt".
     pub fn should_adapt(&self, interval: usize) -> bool {
         // Adapt every N chunks, but only after we have enough data
-        self.chunks_seen > 0 && self.chunks_seen % interval == 0 && self.lines_moving.count >= 3
+        self.chunks_seen > 0 && self.chunks_seen.is_multiple_of(interval) && self.lines_moving.count >= 3
     }
 }
 

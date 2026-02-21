@@ -2,7 +2,7 @@
 //! where it came from. It's my solution at the moment for keeping track
 //! of the information I need to multiplex log lines while printing from
 //! more than one file at a time, and to keep them roughly sorted.
-//! I might have overengineered this and solved a problem that doesn't
+//! I might have over-engineered this and solved a problem that doesn't
 //! matter, so this might vanish or shrink.
 
 use std::fmt::Display;
@@ -215,7 +215,7 @@ mod tests {
         use std::path::PathBuf;
 
         // Lines from different files with different timestamps
-        let lines = vec![
+        let lines = [
             (
                 PathBuf::from("file1.log"),
                 0,
@@ -297,7 +297,7 @@ mod tests {
         use std::path::PathBuf;
 
         // Non-timestamped lines from multiple files
-        let lines = vec![
+        let lines = [
             (PathBuf::from("b.log"), 1, r#"{"message": "b file line 2"}"#.to_string()),
             (PathBuf::from("a.log"), 0, r#"{"message": "a file line 1"}"#.to_string()),
             (PathBuf::from("b.log"), 0, r#"{"message": "b file line 1"}"#.to_string()),

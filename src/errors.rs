@@ -1,4 +1,9 @@
 //! Custom error types for tale with rich diagnostic information
+//!
+//! The miette `Diagnostic` derive macro reads fields annotated with
+//! `#[source_code]` and `#[label]`, but rustc can't trace through the
+//! macro expansion and emits spurious `unused_assignments` warnings.
+#![allow(unused_assignments)]
 
 use std::path::{Path, PathBuf};
 
@@ -266,8 +271,8 @@ fn edit_distance(s1: &str, s2: &str) -> usize {
     for (i, row) in matrix.iter_mut().enumerate().take(len1 + 1) {
         row[0] = i;
     }
-    for j in 0..=len2 {
-        matrix[0][j] = j;
+    for (j, cell) in matrix[0].iter_mut().enumerate() {
+        *cell = j;
     }
 
     for i in 1..=len1 {
