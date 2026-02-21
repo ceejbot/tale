@@ -16,11 +16,8 @@ pub struct ConfigOpts {
     pub mode: InputMode,
     pub force_chunked: bool,
     pub disable_chunked: bool,
-    pub conservative: bool,
     pub no_file_names: bool,
     pub all_file_names: bool,
-    pub adaptive: bool,
-    pub strategy: Option<Strategy>,
     pub max_memory: Option<usize>,
     #[cfg(debug_assertions)]
     pub profile_json: bool,
@@ -146,7 +143,6 @@ pub use runtime::{update, with_config};
 
 use crate::defaults::{SystemDefaults, get_system_config};
 use crate::errors::TaleError;
-use crate::readers::{AdaptiveStrategy, ConservativeStrategy, StaticStrategy, Strategy};
 
 // Public convenience accessors - these work with both implementations
 pub fn tailing() -> bool {
@@ -203,13 +199,6 @@ pub fn disable_chunked() -> bool {
     return config().disable_chunked;
     #[cfg(test)]
     return config().disable_chunked;
-}
-
-pub fn conservative() -> bool {
-    #[cfg(not(test))]
-    return config().conservative;
-    #[cfg(test)]
-    return config().conservative;
 }
 
 pub fn mode() -> InputMode {
@@ -394,19 +383,6 @@ impl ConfigOpts {
             }
         });
 
-        #[cfg(debug_assertions)]
-        let stratarg = args.chunk_strategy.clone();
-        #[cfg(not(debug_assertions))]
-        let stratarg = None;
-
-        // Use specified strategy or production default
-        let strategy = stratarg.or_else(|| match system_config.strategy {
-            "static" => Some(Strategy::Static(StaticStrategy::default())),
-            "adaptive" => Some(Strategy::Adaptive(AdaptiveStrategy::default())),
-            "conservative" => Some(Strategy::Conservative(ConservativeStrategy::default())),
-            _ => Some(Strategy::Conservative(ConservativeStrategy::default())),
-        });
-
         // Determine chunking behavior based on production defaults if not specified
         let force_chunked = if args.chunked {
             true
@@ -429,13 +405,7 @@ impl ConfigOpts {
             disable_chunked: args.no_chunked,
             no_file_names: args.quiet,
             all_file_names: args.verbose,
-            adaptive: args.adaptive,
-            strategy,
             max_memory: Some(max_memory),
-            #[cfg(debug_assertions)]
-            conservative: args.conservative,
-            #[cfg(not(debug_assertions))]
-            conservative: false,
             #[cfg(debug_assertions)]
             profile_json: args.profile_json,
         })
@@ -461,10 +431,7 @@ mod tests {
             chunked: false,
             no_chunked: false,
             args: vec!["-4".to_string()],
-            adaptive: false,
-            chunk_strategy: None,
             max_memory: Some(10_000_000_000),
-            conservative: false,
             completions: None,
             #[cfg(debug_assertions)]
             profile_json: false,

@@ -3,15 +3,12 @@
 //! Tests performance of:
 //! - Memory budget allocation and tracking
 //! - Memory pressure detection
-//! - Memory-constrained strategy adaptation
 
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tale_ndjson::MemoryBudget;
-use tale_ndjson::config::ConfigOpts;
 use tale_ndjson::metrics::detect_memory_pressure;
-use tale_ndjson::readers::strategies::{ConservativeStrategy, IsStrategy};
 
 /// Benchmark memory budget creation
 fn bench_memory_budget_creation(c: &mut Criterion) {
@@ -36,7 +33,6 @@ fn bench_memory_budget_creation(c: &mut Criterion) {
 fn bench_memory_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_allocation");
 
-    // Create a memory budget for testing
     let budget = MemoryBudget::new(100 * 1024 * 1024).expect("Failed to create budget");
 
     let allocation_sizes = vec![
@@ -50,7 +46,6 @@ fn bench_memory_allocation(c: &mut Criterion) {
             b.iter(|| {
                 if let Ok(Some(allocation)) = budget.try_allocate(size, "benchmark") {
                     black_box(&allocation);
-                    // allocation automatically deallocated when dropped
                 }
             })
         });
@@ -78,41 +73,12 @@ fn bench_memory_pressure_detection(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark conservative strategy adaptation under memory pressure
-fn bench_conservative_adaptation(c: &mut Criterion) {
-    // Initialize config for the library
-    tale_ndjson::config::set(ConfigOpts::default()).expect("Failed to initialize config");
-
-    let mut group = c.benchmark_group("conservative_adaptation");
-
-    let strategy = ConservativeStrategy::default();
-    let chunk_sizes = vec![4096, 32768, 262144]; // 4KB, 32KB, 256KB
-
-    for &chunk_size in &chunk_sizes {
-        group.bench_with_input(
-            BenchmarkId::new("adapt_under_pressure", format!("{}kb", chunk_size / 1024)),
-            &chunk_size,
-            |b, &size| {
-                b.iter(|| {
-                    let mut test_strategy = strategy.clone();
-                    let metrics = tale_ndjson::metrics::ChunkMetrics::new();
-                    black_box(test_strategy.adapt_size(&metrics, size))
-                })
-            },
-        );
-    }
-
-    group.finish();
-}
-
 /// Benchmark memory budget statistics collection
 fn bench_memory_statistics(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_statistics");
 
-    // Create budget with some allocations
     let budget = MemoryBudget::new(100 * 1024 * 1024).expect("Failed to create budget");
 
-    // Make a few allocations to have some stats
     let _alloc1 = budget
         .try_allocate(1024 * 1024, "test1")
         .expect("Failed to allocate")
@@ -138,7 +104,6 @@ criterion_group!(
     bench_memory_budget_creation,
     bench_memory_allocation,
     bench_memory_pressure_detection,
-    bench_conservative_adaptation,
     bench_memory_statistics
 );
 

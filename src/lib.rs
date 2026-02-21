@@ -2,7 +2,7 @@
 //!
 //! This library provides utilities for reading, parsing, and formatting
 //! newline-delimited JSON log files with memory-efficient processing
-//! and adaptive chunking strategies.
+//! and chunked file processing.
 
 use std::io::{self, Write};
 
@@ -29,7 +29,7 @@ use clap::builder::Styles;
 use clap::builder::styling::AnsiColor;
 pub use errors::TaleError;
 pub use memory_budget::{MemoryBudget, MemoryPressure};
-pub use readers::strategies::{IsStrategy, Strategy};
+pub use readers::strategies::StaticStrategy;
 pub use readers::{ChunkedFileReader, FileProcessor};
 
 #[derive(Debug, Clone, Parser, Default)]
@@ -92,19 +92,9 @@ pub struct Args {
     /// memory).
     #[arg(long, conflicts_with = "chunked")]
     pub no_chunked: bool,
-    /// Disable adaptive chunking
-    #[arg(short, long)]
-    pub adaptive: bool,
     /// Set a limit on how much memory can be used in file buffers
     #[arg(short, long)]
     pub max_memory: Option<usize>,
-    #[cfg(debug_assertions)]
-    #[arg(long, hide = true)]
-    pub conservative: bool,
-    #[cfg(debug_assertions)]
-    /// Choose a specific chunk strategy for testing
-    #[arg(short = 's', long)]
-    pub chunk_strategy: Option<Strategy>,
     /// Print JSON parsing profile report after processing (debug builds only)
     #[cfg(debug_assertions)]
     #[arg(long, hide = true)]

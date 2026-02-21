@@ -1,9 +1,8 @@
-//! Benchmark comparing different chunking strategies
+//! Benchmark for chunk sizing and file processing
 //!
-//! This benchmark tests the performance of:
-//! - StaticStrategy vs AdaptiveStrategy vs ConservativeStrategy
-//! - Different chunk sizes and file sizes
-//! - Strategy adaptation behavior over time
+//! Tests performance of:
+//! - Chunk size calculation for different file sizes
+//! - End-to-end file processing with optimal chunk sizing
 
 use std::hint::black_box;
 use std::io::Write;
@@ -11,8 +10,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tale_ndjson::config::ConfigOpts;
-use tale_ndjson::metrics::ChunkMetrics;
-use tale_ndjson::readers::strategies::{AdaptiveStrategy, ConservativeStrategy, IsStrategy, StaticStrategy, Strategy};
+use tale_ndjson::readers::strategies::StaticStrategy;
 use tale_ndjson::readers::{ChunkedFileReader, FileProcessor};
 use tempfile::NamedTempFile;
 
@@ -41,136 +39,56 @@ fn create_test_file(data: &[u8]) -> NamedTempFile {
     file
 }
 
-/// Benchmark strategy selection for different file sizes
-fn bench_strategy_selection(c: &mut Criterion) {
-    let mut group = c.benchmark_group("strategy_selection");
+/// Benchmark chunk size calculation for different file sizes
+fn bench_chunk_size_calculation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("chunk_size_calculation");
 
-    let file_sizes = vec![
+    let file_sizes: Vec<(&str, u64)> = vec![
         ("small", 1024),              // 1KB
         ("medium", 1024 * 1024),      // 1MB
         ("large", 100 * 1024 * 1024), // 100MB
     ];
 
     for (name, size) in file_sizes {
-        group.bench_with_input(BenchmarkId::new("from_config", name), &size, |b, &size| {
-            b.iter(|| {
-                let config = ConfigOpts::default();
-                black_box(Strategy::from_config(&config, Some(size)))
-            })
+        group.bench_with_input(BenchmarkId::new("optimal_for_file", name), &size, |b, &size| {
+            b.iter(|| black_box(StaticStrategy::optimal_for_file(size)))
         });
     }
 
     group.finish();
 }
 
-/// Benchmark initial chunk size calculation
-fn bench_initial_chunk_size(c: &mut Criterion) {
-    let mut group = c.benchmark_group("initial_chunk_size");
-
-    let strategies = vec![
-        ("static", Strategy::Static(StaticStrategy::default())),
-        ("adaptive", Strategy::Adaptive(AdaptiveStrategy::default())),
-        ("conservative", Strategy::Conservative(ConservativeStrategy::default())),
-    ];
-
-    for (name, strategy) in strategies {
-        group.bench_with_input(BenchmarkId::new("calculate", name), &strategy, |b, strategy| {
-            b.iter(|| black_box(strategy.initial_chunk_size()))
-        });
-    }
-
-    group.finish();
-}
-
-/// Benchmark strategy adaptation with different performance scenarios
-fn bench_strategy_adaptation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("strategy_adaptation");
-    group.measurement_time(Duration::from_secs(10));
-
-    // Create metrics for different scenarios
-    let fast_metrics = {
-        let mut metrics = ChunkMetrics::new();
-        metrics.record_chunk_processing(32 * 1024, Duration::from_millis(5), 150);
-        metrics.record_chunk_processing(32 * 1024, Duration::from_millis(4), 160);
-        metrics.record_chunk_processing(32 * 1024, Duration::from_millis(3), 170);
-        metrics
-    };
-
-    let slow_metrics = {
-        let mut metrics = ChunkMetrics::new();
-        metrics.record_chunk_processing(128 * 1024, Duration::from_millis(50), 80);
-        metrics.record_chunk_processing(128 * 1024, Duration::from_millis(60), 75);
-        metrics.record_chunk_processing(128 * 1024, Duration::from_millis(70), 70);
-        metrics
-    };
-
-    let scenarios = vec![("fast_performance", &fast_metrics), ("slow_performance", &slow_metrics)];
-
-    for (scenario_name, metrics) in scenarios {
-        let adaptive = AdaptiveStrategy::default();
-        let current_size = adaptive.initial_chunk_size();
-
-        group.bench_with_input(
-            BenchmarkId::new("adaptive_adapt", scenario_name),
-            metrics,
-            |b, metrics| {
-                b.iter(|| {
-                    let mut strategy = adaptive.clone();
-                    black_box(strategy.adapt_size(metrics, current_size))
-                })
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// Benchmark end-to-end file processing with different strategies
-fn bench_file_processing_strategies(c: &mut Criterion) {
+/// Benchmark end-to-end file processing
+fn bench_file_processing(c: &mut Criterion) {
     // Initialize config for the library
     tale_ndjson::config::set(ConfigOpts::default()).expect("Failed to initialize config");
 
     let mut group = c.benchmark_group("file_processing");
-    group.sample_size(20); // Fewer samples for file I/O benchmarks
+    group.sample_size(20);
     group.measurement_time(Duration::from_secs(15));
 
-    // Generate test data (moderate size for reasonable benchmark time)
     let test_data = generate_test_data(1000); // 1000 lines
 
-    let strategies = vec![
-        ("static", Strategy::Static(StaticStrategy::default())),
-        ("adaptive", Strategy::Adaptive(AdaptiveStrategy::default())),
-        ("conservative", Strategy::Conservative(ConservativeStrategy::default())),
-    ];
+    group.bench_function("process_1k_lines", |b| {
+        b.iter(|| {
+            let temp_file = create_test_file(&test_data);
+            let mut reader = ChunkedFileReader::new(temp_file.path()).expect("Failed to create reader");
 
-    for (name, strategy) in strategies {
-        group.bench_with_input(BenchmarkId::new("process_file", name), &strategy, |b, _strategy| {
-            b.iter(|| {
-                let temp_file = create_test_file(&test_data);
-                let mut reader = ChunkedFileReader::new(temp_file.path()).expect("Failed to create reader");
+            let mut line_count = 0;
+            reader
+                .process_lines(|_line| {
+                    line_count += 1;
+                    Ok(())
+                })
+                .expect("Failed to process lines");
 
-                let mut line_count = 0;
-                reader
-                    .process_lines(|_line| {
-                        line_count += 1;
-                        Ok(())
-                    })
-                    .expect("Failed to process lines");
-
-                black_box(line_count)
-            })
-        });
-    }
+            black_box(line_count)
+        })
+    });
 
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_strategy_selection,
-    bench_initial_chunk_size,
-    bench_strategy_adaptation,
-    bench_file_processing_strategies
-);
+criterion_group!(benches, bench_chunk_size_calculation, bench_file_processing);
 
 criterion_main!(benches);

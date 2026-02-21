@@ -1,148 +1,22 @@
-//! Strategy pattern for chunk size management in ChunkedFileReader.
+//! Chunk sizing strategy for ChunkedFileReader.
 //!
-//! This module implements different strategies for determining optimal chunk
-//! sizes:
-//!
-//! ## Strategy Types
-//! - **StaticStrategy**: Fixed chunk size optimized for file size
-//! - **AdaptiveStrategy**: Dynamic adaptation based on performance metrics
-//! - **ConservativeStrategy**: Memory-constrained optimization
-//!
-//! ## Key Design Decisions
-//! - Strategy owns chunk_size (single source of truth)
-//! - ChunkConfig only holds immutable bounds (overlap_size, low_memory_mode)
-//! - Strategies implement IsStrategy trait for consistent interface
-//!
-//! ## Usage
-//! ```no_run
-//! use tale_ndjson::readers::strategies::{Strategy, IsStrategy};
-//! use tale_ndjson::config::ConfigOpts;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let config = ConfigOpts::default();
-//! let file_size = Some(1024 * 1024);
-//! let strategy = Strategy::from_config(&config, file_size);
-//! let chunk_size = strategy.initial_chunk_size();
-//! // let new_size = strategy.adapt_size(&metrics, current_size);
-//! # Ok(())
-//! # }
-//! ```
+//! Uses a static strategy that picks an optimal chunk size based on
+//! file size and sticks with it. This is the right approach for an
+//! I/O tool where JSON parsing dominates runtime.
 
-mod adaptive;
-mod conservative;
 mod fixed;
 
-pub use adaptive::*;
-pub use conservative::*;
 pub use fixed::*;
 
 use crate::config::ConfigOpts;
-use crate::metrics::{ChunkMetrics, is_memory_constrained};
 
-/// This is how a strategy advertises itself to an adaptable reader.
-pub trait IsStrategy: std::fmt::Debug {
-    /// What chunk size should we start with?
-    fn initial_chunk_size(&self) -> usize;
-    /// Should we change?
-    fn should_adapt(&self, metrics: &ChunkMetrics) -> bool;
-    /// What should we use now?
-    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize;
-}
-
-/// Taking Tiger Mountain by
-#[derive(Debug, Clone)]
-pub enum Strategy {
-    /// Use a fixed chunk size; gains from changing would be marginal at best
-    Static(StaticStrategy),
-    /// Choose a dynamic sizing based on metrics
-    Adaptive(AdaptiveStrategy),
-    /// Prioritize memory limits over performance
-    Conservative(ConservativeStrategy),
-}
-
-impl Strategy {
-    pub fn pick_strategy() -> Strategy {
-        // Always adaptive unless in constrained environment
-        if crate::metrics::is_memory_constrained() {
-            Strategy::Conservative(ConservativeStrategy::default())
+impl StaticStrategy {
+    /// Create from CLI options and file size hint
+    pub fn from_config(_config: &ConfigOpts, size_hint: Option<u64>) -> Self {
+        if let Some(size) = size_hint {
+            StaticStrategy::optimal_for_file(size)
         } else {
-            Strategy::Adaptive(AdaptiveStrategy::default())
-        }
-    }
-
-    /// Create from CLI options
-    pub fn from_config(config: &ConfigOpts, size_hint: Option<u64>) -> Self {
-        // Explicit strategy from CLI
-        if let Some(strategy) = &config.strategy {
-            return strategy.clone();
-        }
-
-        // Conservative mode in debug
-        if config.conservative {
-            return Strategy::Conservative(ConservativeStrategy::default());
-        }
-
-        // Adaptive is off
-        if !config.adaptive {
-            let strat = if let Some(size) = size_hint {
-                StaticStrategy::optimal_for_file(size)
-            } else {
-                StaticStrategy::default()
-            };
-            return Strategy::Static(strat);
-        }
-
-        if is_memory_constrained() {
-            Strategy::Conservative(ConservativeStrategy::default())
-        } else {
-            let strat = if let Some(size) = size_hint {
-                AdaptiveStrategy::optimal_for_file(size)
-            } else {
-                AdaptiveStrategy::default()
-            };
-            Strategy::Adaptive(strat)
-        }
-    }
-}
-
-impl Default for Strategy {
-    fn default() -> Self {
-        Strategy::Static(StaticStrategy::default())
-    }
-}
-
-impl From<&str> for Strategy {
-    fn from(value: &str) -> Self {
-        match value.to_lowercase().as_str() {
-            "static" => Self::default(),
-            "adaptive" => Self::Adaptive(AdaptiveStrategy::default()),
-            "memory" => Self::Conservative(ConservativeStrategy::default()),
-            _ => Self::default(),
-        }
-    }
-}
-
-impl IsStrategy for Strategy {
-    fn should_adapt(&self, metrics: &ChunkMetrics) -> bool {
-        match self {
-            Strategy::Static(s) => s.should_adapt(metrics),
-            Strategy::Adaptive(s) => s.should_adapt(metrics),
-            Strategy::Conservative(s) => s.should_adapt(metrics),
-        }
-    }
-
-    fn adapt_size(&mut self, metrics: &ChunkMetrics, current_size: usize) -> usize {
-        match self {
-            Strategy::Static(s) => s.adapt_size(metrics, current_size),
-            Strategy::Adaptive(s) => s.adapt_size(metrics, current_size),
-            Strategy::Conservative(s) => s.adapt_size(metrics, current_size),
-        }
-    }
-
-    fn initial_chunk_size(&self) -> usize {
-        match self {
-            Strategy::Static(s) => s.initial_chunk_size(),
-            Strategy::Adaptive(s) => s.initial_chunk_size(),
-            Strategy::Conservative(s) => s.initial_chunk_size(),
+            StaticStrategy::default()
         }
     }
 }
@@ -152,16 +26,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_strategy_selection() {
-        // Test with explicit strategy (bypassing memory detection)
-        let config = ConfigOpts {
-            adaptive: true,
-            strategy: Some(Strategy::Adaptive(AdaptiveStrategy::default())),
-            conservative: false,
-            ..Default::default()
-        };
-
-        let strategy = Strategy::from_config(&config, None);
-        assert!(matches!(strategy, Strategy::Adaptive(_)));
+    fn test_strategy_from_config() {
+        let config = ConfigOpts::default();
+        let strategy = StaticStrategy::from_config(&config, Some(50_000_000));
+        assert!(strategy.chunk_size > 0);
     }
 }

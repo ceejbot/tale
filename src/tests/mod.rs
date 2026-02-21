@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use jiff::Timestamp;
 
-mod adaptation;
 mod budget;
 mod integration;
 pub mod simulation;

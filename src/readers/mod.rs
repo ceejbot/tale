@@ -2,15 +2,9 @@
 //! cases.
 //!
 //! - **BufferedFileProcessor**: Simple forward-only reading for small files
-//! - **ChunkedFileReader**: Memory-efficient processing with Strategy-based
-//!   adaptation
+//! - **ChunkedFileReader**: Memory-efficient processing for large files
 //! - **BackSeekingProcessor**: Handles backward seeking and tail-like
 //!   functionality
-//!
-//! ChunkedFileReader uses the Strategy pattern for chunk size management:
-//! - **StaticStrategy**: Fixed optimal chunk size (fastest, predictable memory)
-//! - **AdaptiveStrategy**: Dynamic sizing based on performance metrics
-//! - **ConservativeStrategy**: Memory-constrained environments
 //!
 //! `create_file_processor()` automatically selects the best processor based on:
 //! - File size and offset requirements
@@ -240,12 +234,6 @@ pub fn create_file_processor<P: AsRef<Path>>(
     file_size_hint: Option<u64>,
 ) -> Result<FileProcessorType<'static>, TaleError> {
     let path = path.as_ref();
-    let _strategy = if cfg!(debug_assertions) && config::conservative() {
-        Strategy::Static(StaticStrategy::conservative())
-    } else {
-        // Normal smart adaptation
-        Strategy::default()
-    };
 
     // Get file size if not provided
     let file_size = file_size_hint.unwrap_or_else(|| std::fs::metadata(path).map(|m| m.len()).unwrap_or(0));
@@ -370,13 +358,13 @@ mod tests {
     #[test]
     fn chonk_size_optimizer() {
         // Small files should use small chunks
-        assert_eq!(optimal_chunk_size(500_000, None), 8_192);
+        assert_eq!(optimal_chunk_size(500_000), 8_192);
 
         // Medium files should use medium chunks
-        assert_eq!(optimal_chunk_size(50_000_000, None), 131_072); // Updated for production defaults
+        assert_eq!(optimal_chunk_size(50_000_000), 131_072); // Updated for production defaults
 
         // Large files should use large chunks
-        assert_eq!(optimal_chunk_size(500_000_000, None), 524_288); // Updated for production defaults
+        assert_eq!(optimal_chunk_size(500_000_000), 524_288); // Updated for production defaults
 
         // Memory constraint should be respected (this test needs to be removed
         // as it's no longer supported)
@@ -565,7 +553,7 @@ mod tests {
             config: config.clone(),
         };
 
-        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), strategy)?;
 
         assert_eq!(reader.file_size(), test_data.len() as u64);
         assert_eq!(reader.position(), 0);
@@ -673,7 +661,7 @@ mod tests {
             config: config.clone(),
         };
 
-        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), strategy)?;
 
         // Skip first 3 lines
         reader.skip_lines(3)?;
@@ -709,7 +697,7 @@ mod tests {
             config: config.clone(),
         };
 
-        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), Strategy::Static(strategy))?;
+        let mut reader = ChunkedFileReader::with_strategy(temp_file.path(), strategy)?;
 
         // Skip exactly 5 lines (should stop mid-chunk)
         reader.skip_lines(5)?;

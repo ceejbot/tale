@@ -2,9 +2,7 @@
 //! and then doesn't vary it but chugs right on through. This is fine for
 //! single-file reading.
 
-use super::IsStrategy;
 use crate::defaults::io::READ_BUFFER_SIZE;
-use crate::metrics::ChunkMetrics;
 
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
@@ -28,7 +26,7 @@ impl StaticStrategy {
 
     pub fn optimal_for_file(file_size: u64) -> Self {
         let config = ChunkConfig::optimal(file_size);
-        let chunk_size = optimal_chunk_size(file_size, None);
+        let chunk_size = optimal_chunk_size(file_size);
         Self { chunk_size, config }
     }
 
@@ -38,6 +36,11 @@ impl StaticStrategy {
             chunk_size: aligned_size,
             config,
         }
+    }
+
+    /// the fixed chunk size we should use
+    pub fn initial_chunk_size(&self) -> usize {
+        self.chunk_size
     }
 }
 
@@ -53,23 +56,7 @@ impl Default for StaticStrategy {
     }
 }
 
-impl IsStrategy for StaticStrategy {
-    /// the fixed chunk size we should use
-    fn initial_chunk_size(&self) -> usize {
-        self.chunk_size
-    }
-
-    /// Don't change.
-    fn adapt_size(&mut self, _metrics: &ChunkMetrics, current_size: usize) -> usize {
-        current_size // Never change
-    }
-
-    fn should_adapt(&self, _metrics: &ChunkMetrics) -> bool {
-        false // Never adapt
-    }
-}
-
-/// Configuration for FileChunk processing (chunk_size moved to Strategy)
+/// Configuration for FileChunk processing
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
     /// Maximum overlap between chunks to handle line boundaries
@@ -104,14 +91,12 @@ pub fn align_to_block_size(size: usize, block_size: usize) -> usize {
 
 /// Get optimal filesystem block size based on typical modern filesystems
 pub fn get_optimal_block_size() -> usize {
-    // Most modern filesystems use 4KB blocks, but some use larger
-    // 4KB is safe and provides good alignment for most systems
-    4096 // 4KB blocks
+    // Most modern filesystems use 4KB blocks
+    4096
 }
 
 /// Determine optimal chunk size based on file characteristics
-pub fn optimal_chunk_size(file_size: u64, _available_memory: Option<usize>) -> usize {
-    // Use production defaults for optimal chunk sizing
+pub fn optimal_chunk_size(file_size: u64) -> usize {
     crate::defaults::SystemDefaults::optimal_chunk_for_file(file_size)
 }
 
@@ -142,9 +127,9 @@ mod tests {
         let block_size = get_optimal_block_size();
 
         // Test different file sizes
-        let small_chunk = optimal_chunk_size(500_000, None);
-        let medium_chunk = optimal_chunk_size(50_000_000, None);
-        let large_chunk = optimal_chunk_size(500_000_000, None);
+        let small_chunk = optimal_chunk_size(500_000);
+        let medium_chunk = optimal_chunk_size(50_000_000);
+        let large_chunk = optimal_chunk_size(500_000_000);
 
         // All should be aligned to block boundaries
         assert_eq!(small_chunk % block_size, 0);
