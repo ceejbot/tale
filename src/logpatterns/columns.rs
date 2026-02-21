@@ -1,15 +1,18 @@
-//! Custom column layout module optimized for tale's needs.
-//! We blast through the cells in a single pass, left to
-//! right, emitting directly to a buffer without formatting strings.
+//! Column layout module using elastic tabstops via tabwriter.
+//! Cells are assigned to rows, tab-separated, and tabwriter aligns
+//! columns to their widest cell for consistent vertical alignment.
+
+use std::io::Write;
 
 use ansi_width::ansi_width;
 use bytes::BytesMut;
+use tabwriter::TabWriter;
 
-/// Write cells in columns to buffer with left-to-right layout.
+/// Write cells in aligned columns using elastic tabstops.
 ///
-/// Cells are laid out left-to-right with the specified padding between columns.
-/// When the total width would exceed the specified width limit, a new line is
-/// started.
+/// Cells are distributed across rows with a computed column count based on
+/// average cell width. tabwriter aligns each column to its widest cell,
+/// producing consistent vertical alignment across wrapped rows.
 ///
 /// # Arguments
 /// * `buffer` - The buffer to write formatted columns to
@@ -25,67 +28,71 @@ pub fn write_columns(buffer: &mut BytesMut, cells: &[String], width: usize, padd
     }
 
     let start_len = buffer.len();
-    let mut current_line_width = 0;
-    let mut first_in_line = true;
 
-    for cell in cells {
-        let cell_width = display_width(cell);
+    let widths: Vec<usize> = cells.iter().map(|c| display_width(c)).collect();
+    let total_display: usize = widths.iter().sum();
 
-        // Calculate total width needed if we add this cell to current line
-        let needed_width = if first_in_line {
-            cell_width
+    // Determine column count
+    let num_cols = if cells.len() == 1 {
+        1
+    } else {
+        let total_with_padding = total_display + padding * (cells.len() - 1);
+        if total_with_padding <= width {
+            // All cells fit on one line
+            cells.len()
         } else {
-            current_line_width + padding + cell_width
-        };
-
-        // If adding this cell would exceed width limit, start new line
-        if needed_width > width && !first_in_line {
-            buffer.extend_from_slice(b"\n");
-            current_line_width = cell_width;
-            first_in_line = false; // Fixed: Mark that we've written to the new line
-        } else {
-            // Add padding before cell (except for first in line)
-            if !first_in_line {
-                write_padding(buffer, padding);
-                current_line_width += padding;
+            // Estimate from average, then verify elastic tabstop widths fit
+            let avg_width = total_display / cells.len();
+            let mut cols = ((width + padding) / (avg_width + padding)).max(1).min(cells.len());
+            while cols > 1 && max_row_width(&widths, cols, padding) > width {
+                cols -= 1;
             }
-            current_line_width += cell_width;
-            first_in_line = false;
+            cols
         }
+    };
 
-        // Write the cell content
-        buffer.extend_from_slice(cell.as_bytes());
+    let mut tw = TabWriter::new(vec![]).minwidth(0).padding(padding).ansi(true);
+
+    for (i, cell) in cells.iter().enumerate() {
+        if i > 0 && i % num_cols == 0 {
+            let _ = tw.write_all(b"\n");
+        } else if i > 0 {
+            let _ = tw.write_all(b"\t");
+        }
+        let _ = tw.write_all(cell.as_bytes());
+    }
+
+    match tw.into_inner() {
+        Ok(result) => buffer.extend_from_slice(&result),
+        Err(_) => {
+            // Fallback: write cells space-separated (should never happen with Vec<u8>)
+            for (i, cell) in cells.iter().enumerate() {
+                if i > 0 {
+                    buffer.extend_from_slice(b" ");
+                }
+                buffer.extend_from_slice(cell.as_bytes());
+            }
+        }
     }
 
     buffer.len() - start_len
 }
 
-/// Calculate display width of text, accounting for ANSI escape sequences.
-///
-/// Uses ansi_width crate to properly handle colored text without counting
-/// the escape sequences toward the display width.
-fn display_width(text: &str) -> usize {
-    ansi_width(text)
+/// Compute the widest possible row when cells are distributed into `num_cols`
+/// columns. Each column is sized to its widest cell (elastic tabstop behavior).
+fn max_row_width(widths: &[usize], num_cols: usize, padding: usize) -> usize {
+    let mut col_maxes = vec![0usize; num_cols];
+    for (i, &w) in widths.iter().enumerate() {
+        let col = i % num_cols;
+        col_maxes[col] = col_maxes[col].max(w);
+    }
+    let total: usize = col_maxes.iter().sum();
+    total + padding * num_cols.saturating_sub(1)
 }
 
-/// Write the specified number of space characters to the buffer.
-///
-/// Optimized for small padding counts (typically 2-5 spaces).
-fn write_padding(buffer: &mut BytesMut, count: usize) {
-    match count {
-        0 => {}
-        1 => buffer.extend_from_slice(b" "),
-        2 => buffer.extend_from_slice(b"  "),
-        3 => buffer.extend_from_slice(b"   "),
-        4 => buffer.extend_from_slice(b"    "),
-        5 => buffer.extend_from_slice(b"     "),
-        _ => {
-            // For larger counts, use a loop (rare case)
-            for _ in 0..count {
-                buffer.extend_from_slice(b" ");
-            }
-        }
-    }
+/// Calculate display width of text, accounting for ANSI escape sequences.
+fn display_width(text: &str) -> usize {
+    ansi_width(text)
 }
 
 #[cfg(test)]
@@ -118,9 +125,8 @@ mod tests {
         let cells = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let written = write_columns(&mut buffer, &cells, 80, 2);
         let result = String::from_utf8_lossy(&buffer);
-        println!("Simple test result: '{}'", result);
         assert_eq!(result, "a  b  c");
-        assert_eq!(written, 7); // "a  b  c" = 7 bytes
+        assert_eq!(written, 7);
     }
 
     #[test]
@@ -128,9 +134,13 @@ mod tests {
         let mut buffer = BytesMut::new();
         let cells = vec!["long".to_string(), "cell".to_string(), "text".to_string()];
         let written = write_columns(&mut buffer, &cells, 10, 2);
-        // "long  cell" = 10 chars exactly, so "text" wraps
-        assert_eq!(String::from_utf8_lossy(&buffer), "long  cell\ntext");
-        assert_eq!(written, 15); // "long  cell\ntext" = 15 bytes
+        let result = String::from_utf8_lossy(&buffer);
+        let lines: Vec<&str> = result.lines().collect();
+        // With elastic tabstops, 2 columns fit (4+2+4=10)
+        assert_eq!(lines.len(), 2, "Should wrap to 2 lines");
+        assert!(lines[0].contains("long") && lines[0].contains("cell"));
+        assert!(lines[1].contains("text"));
+        assert_eq!(written, result.len());
     }
 
     #[test]
@@ -138,9 +148,13 @@ mod tests {
         let mut buffer = BytesMut::new();
         let cells = vec!["abc".to_string(), "def".to_string(), "ghi".to_string()];
         let written = write_columns(&mut buffer, &cells, 9, 2);
-        // "abc  def" = 8 chars, "ghi" = 3 chars, 8+2+3 = 13 > 9, so wrap
-        assert_eq!(String::from_utf8_lossy(&buffer), "abc  def\nghi");
-        assert_eq!(written, 12);
+        let result = String::from_utf8_lossy(&buffer);
+        let lines: Vec<&str> = result.lines().collect();
+        // 2 columns: 3+2+3=8 ≤ 9, third cell wraps
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("abc") && lines[0].contains("def"));
+        assert!(lines[1].contains("ghi"));
+        assert_eq!(written, result.len());
     }
 
     #[test]
@@ -148,7 +162,6 @@ mod tests {
         let mut buffer = BytesMut::new();
         let cells = vec!["verylongcelltext".to_string()];
         let written = write_columns(&mut buffer, &cells, 10, 2);
-        // Single cell that exceeds width should still be written
         assert_eq!(String::from_utf8_lossy(&buffer), "verylongcelltext");
         assert_eq!(written, 16);
     }
@@ -165,115 +178,6 @@ mod tests {
     #[test]
     fn debug_wrapping_issue() {
         let mut buffer = BytesMut::new();
-        // Reproduce the exact failing case: fit exactly 10 fields on first line
-        // Width 100, fields are 8 chars each, padding 2
-        // Line 1: 8+2+8+2+8+2+8+2+8+2+8+2+8+2+8+2+8+2+8 = 98 chars (fits)
-        // Line 2: 98+2+8 = 108 > 100, so field11k should wrap
-        let cells = vec![
-            "field01a".to_string(),
-            "field02b".to_string(),
-            "field03c".to_string(),
-            "field04d".to_string(),
-            "field05e".to_string(),
-            "field06f".to_string(),
-            "field07g".to_string(),
-            "field08h".to_string(),
-            "field09i".to_string(),
-            "field10j".to_string(), // 10 fields = 98 chars
-            "field11k".to_string(),
-            "field12l".to_string(), // These should wrap
-        ];
-
-        write_columns(&mut buffer, &cells, 100, 2);
-        let result = String::from_utf8_lossy(&buffer);
-        let lines: Vec<&str> = result.lines().collect();
-
-        println!("Debug exact failing case:");
-        for (i, line) in lines.iter().enumerate() {
-            println!("Line {}: '{}' (width: {})", i, line, display_width(line));
-        }
-
-        // Check that field11k and field12l are properly spaced
-        assert_eq!(lines.len(), 2);
-        assert!(
-            lines[1].contains("field11k  field12l"),
-            "Line 1 should have proper spacing: {}",
-            lines[1]
-        );
-    }
-
-    #[test]
-    fn large_padding() {
-        let mut buffer = BytesMut::new();
-        let cells = vec!["a".to_string(), "b".to_string()];
-        let written = write_columns(&mut buffer, &cells, 80, 10);
-        assert_eq!(String::from_utf8_lossy(&buffer), "a          b");
-        assert_eq!(written, 12);
-    }
-
-    #[test]
-    fn ansi_colors() {
-        use owo_colors::OwoColorize;
-
-        let mut buffer = BytesMut::new();
-        let cells = vec!["normal".to_string(), "red".red().to_string(), "blue".blue().to_string()];
-        let written = write_columns(&mut buffer, &cells, 80, 2);
-
-        // The display width should be calculated ignoring ANSI codes
-        // "normal  red  blue" = 17 display characters
-        let result = String::from_utf8_lossy(&buffer);
-
-        // Should contain the ANSI codes but display width calculation should ignore
-        // them
-        assert!(result.contains("normal"));
-        assert!(result.contains("red"));
-        assert!(result.contains("blue"));
-        assert!(written > 17); // More bytes than display chars due to ANSI codes
-
-        // Verify the structure is correct (normal spacing despite ANSI codes)
-        let parts: Vec<&str> = result.split("  ").collect();
-        assert_eq!(parts.len(), 3); // Should be split by double spaces
-    }
-
-    #[test]
-    fn display_width_function() {
-        assert_eq!(display_width("hello"), 5);
-        assert_eq!(display_width(""), 0);
-
-        // Test with ANSI codes - should only count visible characters
-        use owo_colors::OwoColorize;
-        let colored = "test".red().to_string();
-        assert_eq!(display_width(&colored), 4); // Only "test" counts, not ANSI codes
-    }
-
-    #[test]
-    fn write_padding_function() {
-        let mut buffer = BytesMut::new();
-
-        // Test optimized cases
-        write_padding(&mut buffer, 0);
-        assert_eq!(buffer.len(), 0);
-
-        write_padding(&mut buffer, 1);
-        assert_eq!(String::from_utf8_lossy(&buffer), " ");
-
-        buffer.clear();
-        write_padding(&mut buffer, 5);
-        assert_eq!(String::from_utf8_lossy(&buffer), "     ");
-
-        // Test fallback case
-        buffer.clear();
-        write_padding(&mut buffer, 7);
-        assert_eq!(String::from_utf8_lossy(&buffer), "       ");
-    }
-
-    #[test]
-    fn multiline_column_alignment_uniform() {
-        let mut buffer = BytesMut::new();
-
-        // Create enough uniform-length cells to span multiple lines
-        // Each cell is 8 chars, with 2-space padding = 10 chars per column
-        // Width 100 should fit about 10 columns per line
         let cells = vec![
             "field01a".to_string(),
             "field02b".to_string(),
@@ -287,44 +191,78 @@ mod tests {
             "field10j".to_string(),
             "field11k".to_string(),
             "field12l".to_string(),
-            "field13m".to_string(),
-            "field14n".to_string(),
-            "field15o".to_string(),
-            "field16p".to_string(),
-            "field17q".to_string(),
-            "field18r".to_string(),
-            "field19s".to_string(),
-            "field20t".to_string(),
-            "field21u".to_string(),
-            "field22v".to_string(),
-            "field23w".to_string(),
-            "field24x".to_string(),
-            "field25y".to_string(),
-            "field26z".to_string(),
-            "field27A".to_string(),
-            "field28B".to_string(),
-            "field29C".to_string(),
-            "field30D".to_string(),
-            "field31E".to_string(),
-            "field32F".to_string(),
-            "field33G".to_string(),
-            "field34H".to_string(),
-            "field35I".to_string(),
-            "field36J".to_string(),
-            "field37K".to_string(),
-            "field38L".to_string(),
-            "field39M".to_string(),
-            "field40N".to_string(), // 40 cells total
         ];
 
         write_columns(&mut buffer, &cells, 100, 2);
         let result = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = result.lines().collect();
 
-        // Should span multiple lines
-        assert!(lines.len() >= 4, "Expected at least 4 lines, got {}", lines.len());
+        // 10 uniform 8-char fields fit per row: 10*8 + 9*2 = 98 ≤ 100
+        assert_eq!(lines.len(), 2);
+        // Wrapped line should contain both remaining fields
+        assert!(
+            lines[1].contains("field11k") && lines[1].contains("field12l"),
+            "Wrapped line should contain field11k and field12l: {}",
+            lines[1]
+        );
+    }
 
-        // Verify each line doesn't exceed width
+    #[test]
+    fn large_padding() {
+        let mut buffer = BytesMut::new();
+        let cells = vec!["a".to_string(), "b".to_string()];
+        let written = write_columns(&mut buffer, &cells, 80, 10);
+        let result = String::from_utf8_lossy(&buffer);
+        // tabwriter with padding=10: "a" + 10 spaces + "b"
+        assert!(result.contains("a") && result.contains("b"));
+        assert_eq!(display_width(&result), 12); // 1 + 10 + 1
+        assert_eq!(written, 12);
+    }
+
+    #[test]
+    fn ansi_colors() {
+        use owo_colors::OwoColorize;
+
+        let mut buffer = BytesMut::new();
+        let cells = vec!["normal".to_string(), "red".red().to_string(), "blue".blue().to_string()];
+        let written = write_columns(&mut buffer, &cells, 80, 2);
+        let result = String::from_utf8_lossy(&buffer);
+
+        // All cells present
+        assert!(result.contains("normal"));
+        assert!(result.contains("red"));
+        assert!(result.contains("blue"));
+        // More bytes than display chars due to ANSI codes
+        assert!(written > 17);
+        // All on one line
+        assert_eq!(result.lines().count(), 1);
+    }
+
+    #[test]
+    fn display_width_function() {
+        assert_eq!(display_width("hello"), 5);
+        assert_eq!(display_width(""), 0);
+
+        use owo_colors::OwoColorize;
+        let colored = "test".red().to_string();
+        assert_eq!(display_width(&colored), 4);
+    }
+
+    #[test]
+    fn multiline_column_alignment_uniform() {
+        let mut buffer = BytesMut::new();
+
+        // 40 uniform 8-char cells, width 100, padding 2
+        // Each column takes 8+2=10 chars, so 10 columns fit (10*8+9*2=98 ≤ 100)
+        let cells: Vec<String> = (1..=40).map(|i| format!("field{:02}x", i)).collect();
+
+        write_columns(&mut buffer, &cells, 100, 2);
+        let result = String::from_utf8_lossy(&buffer);
+        let lines: Vec<&str> = result.lines().collect();
+
+        // 40 cells / 10 cols = 4 rows
+        assert_eq!(lines.len(), 4, "Expected 4 lines, got {}", lines.len());
+
         for (i, line) in lines.iter().enumerate() {
             let line_width = display_width(line);
             assert!(
@@ -336,26 +274,10 @@ mod tests {
             );
         }
 
-        // For uniform cells, verify consistent structure
-        // Each field is 8 chars + 2 spaces = 10 chars per column (except last in line)
-        // So we should fit 10 fields per line: 8+2+8+2+...+8 = 98 chars
-        for (i, line) in lines.iter().enumerate() {
-            let fields: Vec<&str> = line.split("  ").collect(); // Split by 2-space padding
-            if i < lines.len() - 1 {
-                // Not the last line
-                assert!(
-                    fields.len() >= 9,
-                    "Line {} should have multiple fields: {:?}",
-                    i,
-                    fields
-                );
-            }
-        }
-
-        // Print for visual inspection
-        println!("Uniform column test output:");
-        for (i, line) in lines.iter().enumerate() {
-            println!("Line {}: '{}' (width: {})", i, line, display_width(line));
+        // Verify consistent column count on full rows
+        for line in &lines[..3] {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 10, "Full row should have 10 fields: {}", line);
         }
     }
 
@@ -363,7 +285,6 @@ mod tests {
     fn multiline_column_alignment_mixed_lengths() {
         let mut buffer = BytesMut::new();
 
-        // Create cells with varying lengths to test alignment with mixed widths
         let cells = vec![
             "a".to_string(),
             "medium_field".to_string(),
@@ -410,10 +331,10 @@ mod tests {
         let result = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = result.lines().collect();
 
-        // Should span multiple lines due to varying field lengths
+        // Should span multiple lines
         assert!(lines.len() >= 4, "Expected at least 4 lines, got {}", lines.len());
 
-        // Verify each line doesn't exceed width
+        // Verify each line respects width limit
         for (i, line) in lines.iter().enumerate() {
             let line_width = display_width(line);
             assert!(
@@ -425,78 +346,87 @@ mod tests {
             );
         }
 
-        // Verify that fields are properly separated by 2-space padding
-        for (i, line) in lines.iter().enumerate() {
-            if !line.trim().is_empty() {
-                // Check that we don't have single spaces (should be 2+ or field boundaries)
-                let mut space_count = 0;
-                for ch in line.chars() {
-                    if ch == ' ' {
-                        space_count += 1;
-                    } else {
-                        assert_ne!(
-                            space_count, 1,
-                            "Line {} has single space (should be 2+ for padding): {}",
-                            i, line
-                        );
-                        space_count = 0;
-                    }
-                }
-            }
+        // All cells should appear in output
+        for cell in &cells {
+            assert!(result.contains(cell.as_str()), "Missing cell: {}", cell);
         }
-
-        // Print for visual inspection
-        println!("Mixed-length column test output:");
-        for (i, line) in lines.iter().enumerate() {
-            println!("Line {}: '{}' (width: {})", i, line, display_width(line));
-        }
-
-        // Test specific case: ensure that very long fields don't prevent proper
-        // wrapping
-        let long_field_lines: Vec<&&str> = lines
-            .iter()
-            .filter(|line| line.contains("incredibly_long_field_name_that_should_wrap"))
-            .collect();
-        assert!(!long_field_lines.is_empty(), "Long field should appear in output");
     }
 
     #[test]
     fn column_width_boundary_conditions() {
         let mut buffer = BytesMut::new();
+        let cells = vec!["12345678".to_string(), "90123456".to_string(), "78901234".to_string()];
 
-        // Test exact width boundary conditions
-        let cells = vec![
-            "12345678".to_string(), // 8 chars
-            "90123456".to_string(), // 8 chars
-            "78901234".to_string(), // 8 chars
-        ];
-
-        // With 2-space padding: 8 + 2 + 8 + 2 + 8 = 28 chars total
-        // Test with width exactly 28
+        // Width 28: 8+2+8+2+8=28, should fit exactly
         write_columns(&mut buffer, &cells, 28, 2);
         let result = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = result.lines().collect();
-
         assert_eq!(lines.len(), 1, "Should fit exactly on one line");
-        assert_eq!(display_width(lines[0]), 28, "Width should be 8+2+8+2+8=28");
+        assert_eq!(display_width(lines[0]), 28);
 
-        // Test with width 27 (one less than needed) - should wrap
+        // Width 27: doesn't fit, should wrap
         buffer.clear();
         write_columns(&mut buffer, &cells, 27, 2);
         let result = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines.len(), 2, "Should wrap to two lines with width 27");
 
-        // Test with width 18 (fits first two fields: 8+2+8=18)
+        // Width 18: 8+2+8=18, two columns fit
         buffer.clear();
         write_columns(&mut buffer, &cells, 18, 2);
         let result = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines.len(), 2, "Should wrap last field to second line with width 18");
+    }
 
-        println!("Boundary condition test:");
-        for (i, line) in lines.iter().enumerate() {
-            println!("Line {}: {} (width: {})", i, line, display_width(line));
+    #[test]
+    fn columns_align_across_wrapped_rows() {
+        let mut buffer = BytesMut::new();
+
+        // Cells with varying widths: elastic tabstops should align columns
+        let cells = vec![
+            "short".to_string(),
+            "medium_len".to_string(),
+            "x".to_string(),
+            "a_longer_cell".to_string(),
+            "med".to_string(),
+            "y".to_string(),
+        ];
+
+        write_columns(&mut buffer, &cells, 40, 2);
+        let result = String::from_utf8_lossy(&buffer);
+        let lines: Vec<&str> = result.lines().collect();
+
+        assert!(lines.len() >= 2, "Should wrap to multiple lines");
+
+        // With elastic tabstops, column N on row 0 should start at the same
+        // position as column N on row 1 (this is the key alignment benefit)
+        if lines.len() >= 2 {
+            // Find where the second column starts on each line
+            let line0_parts: Vec<&str> = lines[0].split_whitespace().collect();
+            let line1_parts: Vec<&str> = lines[1].split_whitespace().collect();
+
+            // Both lines should have the same column count (except possibly the last row)
+            if line0_parts.len() == line1_parts.len() {
+                // The second column should start at the same byte offset
+                let col1_start_0 = lines[0].find(line0_parts[1]);
+                let col1_start_1 = lines[1].find(line1_parts[1]);
+                assert_eq!(
+                    col1_start_0, col1_start_1,
+                    "Column 1 should align: row0={:?} row1={:?}",
+                    col1_start_0, col1_start_1
+                );
+            }
         }
+    }
+
+    #[test]
+    fn single_cell_no_tabwriter_overhead() {
+        let mut buffer = BytesMut::new();
+        let cells = vec!["only_one".to_string()];
+        write_columns(&mut buffer, &cells, 80, 5);
+        let result = String::from_utf8_lossy(&buffer);
+        // Single cell should have no padding or extra whitespace
+        assert_eq!(result, "only_one");
     }
 }

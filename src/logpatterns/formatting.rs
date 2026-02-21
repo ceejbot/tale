@@ -2,11 +2,11 @@
 
 /*
 
-CRITICAL module::thing::foobl > message here with rest of width
-LEVEL    MODULE or TIME       > message line wrapped if no line endings in it; as-is if \n present
-8char    20 char              > termwidth - 32 char wide
-blank    timing / bytes?      > STATUS VERB URL if present
-         bytes                > key: value pairs to fill space, wrapping, left aligned at this column
+CRITICAL module::thing::foobl │ message here with rest of width
+LEVEL    MODULE or TIME       │ message line wrapped if no line endings in it; as-is if \n present
+8char    20 char              │ termwidth - 32 char wide
+blank    timing / bytes?      │ STATUS VERB URL if present
+         bytes                │ key: value pairs to fill space, wrapping, left aligned at this column
 
  */
 
@@ -14,10 +14,10 @@ use bytes::BytesMut;
 use owo_colors::OwoColorize;
 use serde_json::Value;
 
-/// Layout / columnizing / formatting constants.
+/// Layout / column / formatting constants.
 pub static LEVEL_WIDTH: usize = 8;
 pub static MODULE_WIDTH: usize = 20;
-pub static COL_SEP: &str = " > ";
+pub static COL_SEP: &str = " │ ";
 
 /// Pre-compiled ANSI escape sequences for log levels (right-aligned to
 /// LEVEL_WIDTH) Format: bright_blue + bold + right-aligned text + reset
@@ -104,19 +104,11 @@ pub fn write_empty_module_column(buffer: &mut BytesMut) {
     buffer.extend_from_slice(COL_SEP.as_bytes());
 }
 
-pub fn start_new_line(buffer: &mut BytesMut, padding: usize) {
-    buffer.extend_from_slice(b"\n");
-    for _ in 0..padding {
-        buffer.extend_from_slice(b" ");
-    }
-    buffer.extend_from_slice(COL_SEP.as_bytes());
-}
-
 pub fn colorize_json_value(value: &serde_json::Value) -> String {
     match value {
         Value::Null => "null".red().to_string(),
         Value::Bool(b) => b.cyan().to_string(),
-        Value::Number(number) => number.bright_magenta().to_string(),
+        Value::Number(number) => number.bright_yellow().to_string(),
         Value::String(text) => {
             let val = format!("\"{text}\"");
             val.green().to_string()
@@ -146,7 +138,7 @@ pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
             format!("{}={}", key.dimmed(), "null".red())
         }
         Value::Bool(b) => format!("{}={}", key.dimmed(), b.cyan()),
-        Value::Number(number) => format!("{}={}", key.dimmed(), number.bright_magenta()),
+        Value::Number(number) => format!("{}={}", key.dimmed(), number.bright_yellow()),
         Value::String(text) => {
             let val = format!("\"{text}\"");
             format!("{}={}", key.dimmed(), val.green())

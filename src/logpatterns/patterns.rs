@@ -5,10 +5,8 @@
 use std::borrow::Cow;
 use std::fmt::Display;
 
-use ansi_width::ansi_width;
 use bytes::BytesMut;
 use humansize::{BINARY, format_size};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_json::Value;
 use textwrap::termwidth;
@@ -366,12 +364,12 @@ impl<'a> PrettyPrintable for &Message<'a> {
         }
 
         if !location_parts.is_empty() {
-            cells.push(location_parts.join("").yellow().to_string());
+            cells.push(colorize_map_entry("location", &Value::String(location_parts.join(""))));
         }
 
         // if we didn't already snag the request id
         if !show_time && let Some(ref v) = self.request_id {
-            cells.push(format!("{}{}", "reqid=".dimmed(), v.bright_yellow()));
+            cells.push(colorize_map_entry("reqid", &Value::String(v.to_string())));
         }
 
         let status = if let Some(ref v) = self.status {
@@ -404,110 +402,114 @@ impl<'a> PrettyPrintable for &Message<'a> {
         } else {
             status
         };
-        if !req_line.is_empty() {
+        let has_req_line = !req_line.is_empty();
+        if has_req_line {
             if let Some(ref query_args) = self.query_args {
                 req_line = format!("{req_line}&{query_args}");
             }
-            cells.push(format!("{}", req_line.blue()));
+            cells.push(colorize_map_entry("request", &Value::String(req_line)));
         }
 
         if let Some(ref path) = self.path {
-            let full = if req_line.is_empty()
-                && let Some(ref query_args) = self.query_args
-            {
+            let full = if !has_req_line && let Some(ref query_args) = self.query_args {
                 format!("{path}&{query_args}")
             } else {
                 path.to_string()
             };
-            cells.push(format!("{}={}", "path".dimmed(), full.blue()));
-        } else if req_line.is_empty()
-            && let Some(ref query_args) = self.query_args
-        {
-            cells.push(format!("&{}", query_args.blue()));
+            cells.push(colorize_map_entry("path", &Value::String(full)));
+        } else if !has_req_line && let Some(ref query_args) = self.query_args {
+            cells.push(colorize_map_entry("args", &Value::String(query_args.to_string())));
         }
 
         if let Some(ref request_size) = self.request_size {
-            cells.push(format!("{} bytes", request_size.bright_purple()));
+            cells.push(colorize_map_entry(
+                "request_size",
+                &Value::String(format!("{} bytes", request_size)),
+            ));
         }
 
         // Docker/Kubernetes container information
         if let Some(ref log_content) = self.log {
-            cells.push(format!("{}={}", "log".dimmed(), log_content.white()));
+            cells.push(colorize_map_entry("log", &Value::String(log_content.to_string())));
         }
 
         if let Some(ref stream) = self.stream {
-            let colored_stream = match stream.as_ref() {
-                "stdout" => stream.green().to_string(),
-                "stderr" => stream.red().to_string(),
-                _ => stream.white().to_string(),
-            };
-            cells.push(format!("{}={}", "stream".dimmed(), colored_stream));
+            cells.push(colorize_map_entry("stream", &Value::String(stream.to_string())));
         }
 
         if let Some(ref pod) = self.pod {
-            cells.push(format!("{}={}", "pod".dimmed(), pod.bright_blue()));
+            cells.push(colorize_map_entry("pod", &Value::String(pod.to_string())));
         }
 
         if let Some(ref namespace) = self.namespace {
-            cells.push(format!("{}={}", "namespace".dimmed(), namespace.bright_cyan()));
+            cells.push(colorize_map_entry("namespace", &Value::String(namespace.to_string())));
         }
 
         if let Some(ref container) = self.container {
-            cells.push(format!("{}={}", "container".dimmed(), container.cyan()));
+            cells.push(colorize_map_entry("container", &Value::String(container.to_string())));
         }
 
         if let Some(ref node) = self.node {
-            cells.push(format!("{}={}", "node".dimmed(), node.blue()));
+            cells.push(colorize_map_entry("node", &Value::String(node.to_string())));
         }
 
         // Web server performance metrics
         if let Some(ref response_bytes) = self.response_bytes {
-            cells.push(format!(
-                "{}={}",
-                "response_bytes".dimmed(),
-                response_bytes.bright_purple()
+            cells.push(colorize_map_entry(
+                "response_bytes",
+                &Value::String(response_bytes.to_string()),
             ));
         }
 
         if let Some(ref request_duration) = self.request_duration {
-            cells.push(format!(
-                "{}={}",
-                "request_time".dimmed(),
-                request_duration.bright_purple()
+            cells.push(colorize_map_entry(
+                "request_time",
+                &Value::String(request_duration.to_string()),
             ));
         }
 
         if let Some(ref upstream_time) = self.upstream_time {
-            cells.push(format!("{}={}", "upstream_time".dimmed(), upstream_time.purple()));
+            cells.push(colorize_map_entry(
+                "upstream_time",
+                &Value::String(upstream_time.to_string()),
+            ));
         }
 
         if let Some(ref upstream_server) = self.upstream_server {
-            cells.push(format!("{}={}", "upstream".dimmed(), upstream_server.bright_blue()));
+            cells.push(colorize_map_entry(
+                "upstream",
+                &Value::String(upstream_server.to_string()),
+            ));
         }
 
         if let Some(ref upstream_status) = self.upstream_status {
-            cells.push(format!("{}={}", "upstream_status".dimmed(), upstream_status.blue()));
+            cells.push(colorize_map_entry(
+                "upstream_status",
+                &Value::String(upstream_status.to_string()),
+            ));
         }
 
         if let Some(ref upstream_header_time) = self.upstream_header_time {
-            cells.push(format!(
-                "{}={}ms",
-                "upstream_header_time".dimmed(),
-                upstream_header_time.bright_purple()
+            cells.push(colorize_map_entry(
+                "upstream_header_time",
+                &Value::String(format!("{}ms", upstream_header_time)),
             ));
         }
 
         // OpenTelemetry tracing
         if let Some(ref trace_id) = self.trace_id {
-            cells.push(format!("{}={}", "trace_id".dimmed(), trace_id.bright_yellow()));
+            cells.push(colorize_map_entry("trace_id", &Value::String(trace_id.to_string())));
         }
 
         if let Some(ref span_id) = self.span_id {
-            cells.push(format!("{}={}", "span_id".dimmed(), span_id.bright_yellow()));
+            cells.push(colorize_map_entry("span_id", &Value::String(span_id.to_string())));
         }
 
         if let Some(ref trace_flags) = self.trace_flags {
-            cells.push(format!("{}={}", "trace_flags".dimmed(), trace_flags.yellow()));
+            cells.push(colorize_map_entry(
+                "trace_flags",
+                &Value::String(trace_flags.to_string()),
+            ));
         }
 
         if let Some(ref resources) = self.resource {
@@ -516,26 +518,26 @@ impl<'a> PrettyPrintable for &Message<'a> {
 
         // Thread information
         if let Some(ref thread) = self.thread {
-            cells.push(format!("{}={}", "thread".dimmed(), thread.green()));
+            cells.push(colorize_map_entry("thread", &Value::String(thread.to_string())));
         }
 
         // Host/IP information
         if let Some(ref host) = self.host {
-            cells.push(format!("{}={}", "host".dimmed(), host.blue()));
+            cells.push(colorize_map_entry("host", &Value::String(host.to_string())));
         }
 
         // User agent
         if let Some(ref user_agent) = self.user_agent {
-            cells.push(format!("{}={}", "user_agent".dimmed(), user_agent.green()));
+            cells.push(colorize_map_entry("user_agent", &Value::String(user_agent.to_string())));
         }
 
         // Performance metrics
         if let Some(ref elapsed) = self.elapsed {
-            cells.push(format!("{}={}", "elapsed".dimmed(), elapsed.bright_purple()));
+            cells.push(colorize_map_entry("elapsed", &Value::String(elapsed.to_string())));
         }
 
         if let Some(ref size) = self.size {
-            cells.push(format!("{}={}", "size".dimmed(), size.bright_purple()));
+            cells.push(colorize_map_entry("size", &Value::String(size.to_string())));
         }
 
         match self.rest {
@@ -622,16 +624,6 @@ impl<'a> PrettyPrintable for Java<'a> {
             LEVEL_WIDTH
         };
 
-        let pad_or_newline = |width: usize, count: usize, buf: &mut BytesMut| {
-            if count + width + 2 >= max_message_width {
-                start_new_line(buf, padding);
-                padding + 3
-            } else {
-                buf.extend_from_slice(b"  ");
-                count + 2
-            }
-        };
-
         buffer.extend_from_slice(get_level_bytes(&self.level));
         if show_time {
             buffer.extend_from_slice(b" ");
@@ -642,70 +634,53 @@ impl<'a> PrettyPrintable for Java<'a> {
 
         format_message(&self.message, buffer, padding, max_message_width);
 
-        for _ in 0..padding {
-            buffer.extend_from_slice(b" ");
-        }
-        buffer.extend_from_slice(COL_SEP.as_bytes());
-        let mut count = padding + 3;
+        let mut cells: Vec<String> = Vec::new();
 
         if !self.request_id.is_empty() {
-            buffer.extend_from_slice(self.request_id.bright_yellow().to_string().as_bytes());
-            count += self.request_id.len();
+            cells.push(colorize_map_entry("reqid", &Value::String(self.request_id.to_string())));
         }
-
-        let mut formatted: String;
         if !self.thread.is_empty() {
-            formatted = format!("{}{}", "thread=".dimmed(), self.thread.green());
-            let nextwidth = ansi_width(&formatted);
-            if !self.request_id.is_empty() {
-                count = pad_or_newline(nextwidth, count, buffer);
+            cells.push(colorize_map_entry("thread", &Value::String(self.thread.to_string())));
+        }
+        cells.push(colorize_map_entry(
+            "class",
+            &Value::String(format!("{} :: {}", self.class, self.method)),
+        ));
+        cells.push(colorize_map_entry("source", &Value::String(self.source.to_string())));
+
+        match &self.rest {
+            Value::Object(map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
             }
-            buffer.extend_from_slice(formatted.as_bytes());
-            count += nextwidth;
+            v => {
+                cells.push(colorize_json_value(v));
+            }
         }
 
-        formatted = format!("{} :: {}", self.class.blue(), self.method.blue());
-        let nextwidth = ansi_width(&formatted);
-        count = pad_or_newline(nextwidth, count, buffer);
-        buffer.extend_from_slice(formatted.as_bytes());
-        count += nextwidth;
+        if !cells.is_empty() {
+            let mut column_buffer = BytesMut::new();
+            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
 
-        formatted = format!("{}", self.source.purple());
-        let nextwidth = ansi_width(&formatted);
-        pad_or_newline(nextwidth, count, buffer);
-        buffer.extend_from_slice(formatted.as_bytes());
-        // count += nextwidth;
-
-        let cells = self.cells();
-        buffer.extend_from_slice(b"\n");
-        if cells.is_empty() {
-            return buffer.len();
-        }
-
-        // Write the columns with proper padding for continuation lines
-        let mut column_buffer = BytesMut::new();
-        columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
-
-        let column_output = String::from_utf8_lossy(&column_buffer);
-        for line in column_output.lines() {
-            if !line.trim().is_empty() {
-                // Add padding
-                for _ in 0..padding {
-                    buffer.extend_from_slice(b" ");
+            let column_output = String::from_utf8_lossy(&column_buffer);
+            for line in column_output.lines() {
+                if !line.trim().is_empty() {
+                    for _ in 0..padding {
+                        buffer.extend_from_slice(b" ");
+                    }
+                    buffer.extend_from_slice(COL_SEP.as_bytes());
+                    buffer.extend_from_slice(line.as_bytes());
+                    buffer.extend_from_slice(b"\n");
                 }
-                buffer.extend_from_slice(COL_SEP.as_bytes());
-                buffer.extend_from_slice(line.as_bytes());
-                buffer.extend_from_slice(b"\n");
             }
         }
 
         if !self.stack_trace.is_empty() {
-            // start a new line, with separator
             for _ in 0..padding {
                 buffer.extend_from_slice(b" ");
             }
             buffer.extend_from_slice(COL_SEP.as_bytes());
-            // We treat this like a message and either emit intact or wrap it.
             format_message(&self.stack_trace, buffer, padding, max_message_width);
         }
 
@@ -781,71 +756,43 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
 
         format_message(&self.message, buffer, padding, max_message_width);
 
-        for _ in 0..padding {
-            buffer.extend_from_slice(b" ");
-        }
-        buffer.extend_from_slice(COL_SEP.as_bytes());
-        let mut count = padding + 3;
-        buffer.extend_from_slice(self.request_id.bright_yellow().to_string().as_bytes());
-        buffer.extend_from_slice(b"  ");
-        count += self.request_id.len() + 2;
-        let mut formatted = format!("{} {} {} ", self.method.blue(), self.url.blue(), self.status.blue());
-        buffer.extend_from_slice(formatted.as_bytes());
-        count += ansi_width(&formatted);
-        formatted.clear();
-
         let sized = format_size(self.size, BINARY);
-        formatted = format!("{}{}  ", "size=".dimmed(), sized.bright_magenta());
-        if count + ansi_width(&formatted) >= max_message_width {
-            start_new_line(buffer, padding);
-            count = padding + 3
-        }
-        buffer.extend_from_slice(formatted.as_bytes());
-        count += ansi_width(&formatted);
+        let mut cells: Vec<String> = vec![
+            colorize_map_entry("reqid", &Value::String(self.request_id.to_string())),
+            colorize_map_entry("method", &Value::String(self.method.to_string())),
+            colorize_map_entry("url", &Value::String(self.url.to_string())),
+            colorize_map_entry("status", &Value::Number(serde_json::Number::from(self.status))),
+            colorize_map_entry("size", &Value::String(sized)),
+            colorize_map_entry("elapsed", &Value::String(self.elapsed.to_string())),
+            colorize_map_entry("remote_host", &Value::String(self.remote_host.to_string())),
+            colorize_map_entry("user_agent", &Value::String(self.user_agent.to_string())),
+        ];
 
-        // tedious repetition but
-        formatted = format!("{}{}  ", "elapsed=".dimmed(), self.elapsed.magenta());
-        if count + ansi_width(&formatted) >= max_message_width {
-            start_new_line(buffer, padding);
-            count = padding + 3
-        }
-        buffer.extend_from_slice(formatted.as_bytes());
-        count += ansi_width(&formatted);
-
-        formatted = format!("{}{}  ", "remote_host=".dimmed(), self.remote_host.blue());
-        if count + ansi_width(&formatted) >= max_message_width {
-            start_new_line(buffer, padding);
-            count = padding + 3
-        }
-        buffer.extend_from_slice(formatted.as_bytes());
-        count += ansi_width(&formatted);
-
-        formatted = format!("{}{}  ", "user_agent=".dimmed(), self.user_agent.green());
-        if count + ansi_width(&formatted) >= max_message_width {
-            start_new_line(buffer, padding);
-        }
-        buffer.extend_from_slice(formatted.as_bytes());
-
-        let cells = self.cells();
-        buffer.extend_from_slice(b"\n");
-        if cells.is_empty() {
-            return buffer.len();
+        match &self.rest {
+            Value::Object(map) => {
+                map.iter().for_each(|(key, value)| {
+                    cells.push(colorize_map_entry(key, value));
+                });
+            }
+            v => {
+                cells.push(colorize_json_value(v));
+            }
         }
 
-        // Write the columns with proper padding for continuation lines
-        let mut column_buffer = BytesMut::new();
-        columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
+        if !cells.is_empty() {
+            let mut column_buffer = BytesMut::new();
+            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
 
-        let column_output = String::from_utf8_lossy(&column_buffer);
-        for line in column_output.lines() {
-            if !line.trim().is_empty() {
-                // Add padding
-                for _ in 0..padding {
-                    buffer.extend_from_slice(b" ");
+            let column_output = String::from_utf8_lossy(&column_buffer);
+            for line in column_output.lines() {
+                if !line.trim().is_empty() {
+                    for _ in 0..padding {
+                        buffer.extend_from_slice(b" ");
+                    }
+                    buffer.extend_from_slice(COL_SEP.as_bytes());
+                    buffer.extend_from_slice(line.as_bytes());
+                    buffer.extend_from_slice(b"\n");
                 }
-                buffer.extend_from_slice(COL_SEP.as_bytes());
-                buffer.extend_from_slice(line.as_bytes());
-                buffer.extend_from_slice(b"\n");
             }
         }
 
@@ -906,7 +853,7 @@ mod tests {
             let lines: Vec<&str> = stringy.split('\n').collect();
             let length = lines.len();
 
-            assert_eq!(length, 4);
+            assert_eq!(length, 5);
         });
     }
 

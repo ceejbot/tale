@@ -15,6 +15,7 @@ pub mod simulation;
 pub enum TestLogPattern {
     /// Optimized HTTP server logs (fastest parsing path)
     Canonical,
+    #[allow(dead_code)]
     /// General structured logs with varied fields
     Message,
     /// Java application logs with stack traces
