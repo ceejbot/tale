@@ -29,7 +29,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::errors::TaleError;
 
-/// Memory pressure levels for adaptive response
+/// Memory pressure levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPressure {
     /// Memory usage < 60% of limit
@@ -101,7 +101,7 @@ impl BudgetState {
     }
 }
 
-/// Global memory budget manager
+/// Shared memory budget manager
 #[derive(Debug, Clone)]
 pub struct MemoryBudget {
     inner: Arc<RwLock<BudgetState>>,

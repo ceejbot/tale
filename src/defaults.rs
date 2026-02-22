@@ -1,9 +1,7 @@
 //! System defaults and configuration constants for Tale
 //!
 //! This module provides all configuration constants, system defaults, and
-//! preset configurations for the Tale log processing tool. It consolidates
-//! what were previously separate constants.rs and production_defaults.rs
-//! modules.
+//! preset configurations for the Tale log processing tool.
 
 use std::time::Duration;
 
@@ -26,7 +24,7 @@ pub mod io {
     /// Default capacity for output byte buffers.
     pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
 
-    /// The initial chunk size to use for adaptive chunked readers.
+    /// The initial chunk size to use for chunked readers.
     pub const INITIAL_CHUNK_SIZE: usize = 32 * 1024; // 32K bytes
 }
 
@@ -75,7 +73,7 @@ impl SystemDefaults {
     ///
     /// Based on benchmarks:
     /// - 32KB provides good initial performance
-    /// - Small enough for quick adaptation
+    /// - Small enough for efficient iteration
     /// - Large enough for efficient I/O
     pub const DEFAULT_CHUNK_SIZE: usize = 32 * 1024; // 32KB (block-aligned)
 

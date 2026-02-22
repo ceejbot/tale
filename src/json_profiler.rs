@@ -1,4 +1,4 @@
-//! JSON deserialization profiling for Phase 2.3
+//! JSON deserialization profiling
 //!
 //! This module provides tools to profile JSON parsing performance and
 //! measure which Printable variants are hit most frequently.

@@ -15,7 +15,7 @@ use crate::logpatterns::formatting::*;
 
 #[derive(Debug, Clone)]
 pub struct LogfmtLine {
-    /// The key=value pairs from the
+    /// The key=value pairs from the log line log line
     pub pairs: HashMap<String, LogValue>,
     /// Any string content that was not associated with a key
     bare: Vec<String>,

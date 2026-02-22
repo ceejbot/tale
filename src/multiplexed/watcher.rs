@@ -1,4 +1,4 @@
-//! Multi-file watching using notify and async-watcher.
+//! Multi-file watching using notify.
 //!
 //! This module handles file system event monitoring for multiple files,
 //! coordinating with the file state manager and batch processor.

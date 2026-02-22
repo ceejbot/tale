@@ -110,8 +110,7 @@ impl<'a> StdinProcessor<'a> {
         self.flush()
     }
 
-    /// We have a partial buffer left over from a read. Seek back,
-    /// then continue processing.
+    /// Process leftover bytes from a partial read, then continue.
     pub fn handle_overshoot(&mut self, overshoot: &[u8]) -> Result<()> {
         // Process any complete lines in the overshoot buffer using byte operations
         let mut start = 0;
@@ -253,7 +252,7 @@ impl<'a> StdinProcessor<'a> {
         }
     }
 
-    /// Show last N lines from stdin (adaptive approach with circular buffer)
+    /// Show last N lines from stdin, with fallback to temp file for large inputs
     pub fn backtrack_lines(&mut self, lines_to_show: u64) -> Result<()> {
         use std::collections::VecDeque;
 

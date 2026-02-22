@@ -112,8 +112,7 @@ impl FileState {
             false
         };
 
-        // Changes include such changes as: availability, rotation, size change, an
-        // almost fanati--
+        // Changed if: availability toggled, file rotated, or new data written
         let changed = was_available != self.available || file_rotated || (self.available && new_size > old_size);
 
         Ok(changed)
@@ -187,8 +186,8 @@ impl FileStateManager {
         Ok(())
     }
 
-    /// Add a file to be tracked, starting from the end. No offsets for
-    /// MULTIBALL.
+    /// Add a file to be tracked, starting from the end. Offsets are not
+    /// applied in multi-file mode.
     pub fn add_file_for_tailing<P: AsRef<Path>>(&mut self, path: P) -> Result<(), TaleError> {
         let path = path.as_ref().to_path_buf();
         let mut state = FileState::new_and_refresh(path.clone())?;

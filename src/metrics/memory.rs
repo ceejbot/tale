@@ -1,8 +1,4 @@
-//! Pressure pushing down on me pressing down on you
-//! no man ask for under pressure
-//! that burns a building down
-//! splits a family in two
-//! puts people on streets
+//! System memory pressure detection.
 
 #[cfg(not(test))]
 pub use memimpl::*;

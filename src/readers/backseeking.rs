@@ -1,6 +1,5 @@
-//! Handle tailing or catting non-multiplex cases while pretty-printing
-//! everything we can. We can tuck these simple cases off in its own file and
-//! leave them to be simple.
+//! Backward-seeking file processor for negative and byte-based offsets on
+//! single files. Handles tail-like functionality (last N lines/bytes).
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};

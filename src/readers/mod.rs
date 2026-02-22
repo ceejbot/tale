@@ -248,9 +248,7 @@ pub fn create_file_processor<P: AsRef<Path>>(
             || (file_size > CHUNKED_WITH_OFFSET_FILE_SIZE && large_offset)
             || file_size > ALWAYS_CHUNKED_FILE_SIZE);
 
-    // This is the only reader that can handle negative block and byte offsets, and
-    // it already handles them reasonably (though its chunks might not be
-    // optimal). This is something I need to refactor away.
+    // This is the only reader that can handle negative and byte offsets.
     if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes) {
         let processor = BackSeekingProcessor::new(PathBuf::from(path));
         return Ok(FileProcessorType::BackSeeking(processor));

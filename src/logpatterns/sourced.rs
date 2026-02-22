@@ -1,9 +1,6 @@
 //! SourcedLine is a wrapper for a printable line that keeps track of
-//! where it came from. It's my solution at the moment for keeping track
-//! of the information I need to multiplex log lines while printing from
-//! more than one file at a time, and to keep them roughly sorted.
-//! I might have over-engineered this and solved a problem that doesn't
-//! matter, so this might vanish or shrink.
+//! where it came from, used for multiplexing log lines while printing
+//! from more than one file at a time and keeping them roughly sorted.
 
 use std::fmt::Display;
 use std::path::PathBuf;
