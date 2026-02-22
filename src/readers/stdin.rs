@@ -252,7 +252,8 @@ impl<'a> StdinProcessor<'a> {
         }
     }
 
-    /// Show last N lines from stdin, with fallback to temp file for large inputs
+    /// Show last N lines from stdin, with fallback to temp file for large
+    /// inputs
     pub fn backtrack_lines(&mut self, lines_to_show: u64) -> Result<()> {
         use std::collections::VecDeque;
 
