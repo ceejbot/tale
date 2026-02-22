@@ -60,6 +60,7 @@ rust_2018_idioms = { level = "warn", priority = 4 }
 
 [lints.clippy]
 unwrap_used = "deny"
+manual_is_multiple_of = "allow"
 
 [profile.release]
 lto = true        # Enable full link-time optimization

@@ -36,7 +36,7 @@ fn generate_ndjson_data(lines: usize) -> Vec<u8> {
         let component = components[i % components.len()];
         let message = messages[i % messages.len()];
 
-        let line = if i.is_multiple_of(10) {
+        let line = if i % 10 == 0 {
             // Every 10th line: Rich structured log (canonical format)
             format!(
                 r#"{{"timestamp":"2024-01-01T{:02}:{:02}:{:02}Z","level":"{}","message":"{}","method":"GET","url":"/api/v1/users/{}","status":"200","elapsed":"{}","size":"{}","request_id":"req-{}","remote_host":"192.168.1.{}","user_agent":"test-client/1.0"}}"#,
@@ -51,7 +51,7 @@ fn generate_ndjson_data(lines: usize) -> Vec<u8> {
                 i,
                 1 + (i % 254)
             )
-        } else if i.is_multiple_of(5) {
+        } else if i % 5 == 0 {
             // Every 5th line: Medium structured log
             format!(
                 r#"{{"timestamp":"2024-01-01T{:02}:{:02}:{:02}Z","level":"{}","message":"{}","component":"{}","request_id":"req-{}","user_id":"{}","elapsed_ms":"{}"}}"#,
