@@ -118,21 +118,17 @@ impl BackSeekingProcessor {
         // Set our position in the file based on offset unit.
         match units {
             config::OffsetUnit::Lines => {
-                if offset > 0 {
-                    // Positive offset: skip N lines from the beginning,
-                    // which we do NOT do here
-                    file.seek(io::SeekFrom::Start(0))?;
-                } else if offset < 0 {
+                if offset < 0 {
                     // Negative offset: start N lines from the end
                     let start = self.move_n_lines_back(&mut file, (-offset) as u64)?;
                     file.seek(io::SeekFrom::Start(start))?;
-                } else if tailing {
-                    // Zero offset: start from the end (no lines to show unless tailing)
+                } else if offset == 0 && tailing {
+                    // Zero offset while tailing: start from the end (show only new data)
                     file.seek(io::SeekFrom::End(0))?;
                 }
+                // Positive offset: caller handles forward-skipping lines
             }
             config::OffsetUnit::Bytes => {
-                // Byte-based offset
                 if offset > 0 {
                     // Positive offset: skip N bytes from the beginning
                     file.seek(io::SeekFrom::Start(offset as u64))?;
@@ -140,7 +136,7 @@ impl BackSeekingProcessor {
                     // Negative offset: start N bytes from the end
                     file.seek(io::SeekFrom::End(offset))?;
                 } else if tailing {
-                    // Zero offset: start from the end
+                    // Zero offset while tailing: start from the end
                     file.seek(io::SeekFrom::End(0))?;
                 }
             }
@@ -262,46 +258,33 @@ impl BackSeekingProcessor {
             return Ok(());
         }
 
-        // Now we tell a tale of tailing.
+        // Keep the same BufReader alive across the polling loop so its internal
+        // buffer stays consistent with the file position. Re-creating BufReader
+        // each iteration caused it to read-ahead up to 8KB, advance the OS file
+        // position, and then stream_position() would record that inflated offset,
+        // silently skipping all the lines that were buffered but not yet consumed.
         let mut last_flush = Instant::now();
 
-        // Get the file back from the reader
-        let mut file = reader.into_inner();
-        let mut file_position = file.stream_position().into_diagnostic()?;
-
-        // Polling loop for file growth detection
-        // Note: Could be enhanced with inotify/file system events for efficiency
         loop {
-            std::thread::sleep(Duration::from_millis(100));
-
-            // Check if file has grown
-            let current_size = file.seek(io::SeekFrom::End(0)).into_diagnostic()?;
-            if current_size > file_position {
-                // Hide and seek, trains and sewing machines.
-                file.seek(io::SeekFrom::Start(file_position)).into_diagnostic()?;
-                let mut tail_reader = BufReader::new(&file);
-
-                match tail_reader.read_line(&mut line).into_diagnostic()? {
-                    0 => {
-                        // EOF - no new data available, continue polling
-                        continue;
+            match reader.read_line(&mut line).into_diagnostic()? {
+                0 => {
+                    // EOF - no new data yet; flush pending output and poll again
+                    if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                        self.outlock.flush().into_diagnostic()?;
+                        last_flush = Instant::now();
                     }
-                    _ => {
-                        strip_line_ending(&mut line);
-                        // New data available - process it.
-                        process_line(&line, &mut self.buffer, &mut self.outlock)?;
-                        if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
-                            self.outlock.flush().into_diagnostic()?;
-                            last_flush = Instant::now();
-                        }
-
-                        line.clear();
-                        self.buffer.clear();
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                _ => {
+                    strip_line_ending(&mut line);
+                    process_line(&line, &mut self.buffer, &mut self.outlock)?;
+                    line.clear();
+                    self.buffer.clear();
+                    if last_flush.elapsed() >= TAIL_FLUSH_INTERVAL {
+                        self.outlock.flush().into_diagnostic()?;
+                        last_flush = Instant::now();
                     }
                 }
-
-                // Note where we finished reading so we can figure out if we get more.
-                file_position = file.stream_position().into_diagnostic()?;
             }
         }
     }
@@ -310,6 +293,49 @@ impl BackSeekingProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_to_position_tailing_zero_offset_starts_at_end() {
+        use std::io::{Read, Write};
+
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        temp_file
+            .write_all(b"line1\nline2\nline3\n")
+            .expect("Failed to write to temp file");
+
+        let mut processor = BackSeekingProcessor::new(PathBuf::from(temp_file.path()));
+        let mut file = processor
+            .move_to_position(0, config::OffsetUnit::Lines, true)
+            .expect("move_to_position should succeed");
+
+        // tailing with no offset starts at EOF: nothing to read until new data arrives
+        let mut result = String::new();
+        file.read_to_string(&mut result).expect("Failed to read file");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn move_to_position_negative_offset_seeks_from_end() {
+        use std::io::{Read, Write};
+
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        temp_file
+            .write_all(b"line1\nline2\nline3\nline4\nline5\n")
+            .expect("Failed to write to temp file");
+
+        let mut processor = BackSeekingProcessor::new(PathBuf::from(temp_file.path()));
+        let mut file = processor
+            .move_to_position(-2, config::OffsetUnit::Lines, false)
+            .expect("move_to_position should succeed");
+
+        let mut result = String::new();
+        file.read_to_string(&mut result).expect("Failed to read file");
+        assert_eq!(result, "line4\nline5\n");
+    }
 
     #[test]
     fn seeking_backwards() {
