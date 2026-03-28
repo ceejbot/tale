@@ -248,8 +248,9 @@ pub fn create_file_processor<P: AsRef<Path>>(
             || (file_size > CHUNKED_WITH_OFFSET_FILE_SIZE && large_offset)
             || file_size > ALWAYS_CHUNKED_FILE_SIZE);
 
-    // This is the only reader that can handle negative and byte offsets.
-    if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes) {
+    // This is the only reader that can handle negative and byte offsets,
+    // and it's also the only reader with a tail-following loop.
+    if offset < 0 || matches!(offset_unit, config::OffsetUnit::Bytes) || config::tailing() {
         let processor = BackSeekingProcessor::new(PathBuf::from(path));
         return Ok(FileProcessorType::BackSeeking(processor));
     }
