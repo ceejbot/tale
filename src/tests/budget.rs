@@ -6,7 +6,7 @@ use crate::memory_budget::{MemoryBudget, MemoryPressure};
 fn memory_budget_basic_features_work() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(10 * 1024)?;
 
-    let alloc1 = budget.try_allocate(4096, "test_reader")?;
+    let alloc1 = budget.try_allocate(4096)?;
     assert!(alloc1.is_some());
 
     let stats = budget.usage_stats()?;
@@ -24,16 +24,16 @@ fn memory_budget_basic_features_work() -> Result<(), Box<dyn std::error::Error>>
 fn test_memory_pressure_levels() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(1000)?;
 
-    let _alloc1 = budget.try_allocate(500, "reader1")?;
+    let _alloc1 = budget.try_allocate(500)?;
     assert_eq!(budget.current_pressure()?, MemoryPressure::Low);
 
-    let _alloc2 = budget.try_allocate(150, "reader2")?;
+    let _alloc2 = budget.try_allocate(150)?;
     assert_eq!(budget.current_pressure()?, MemoryPressure::Moderate);
 
-    let _alloc3 = budget.try_allocate(200, "reader3")?;
+    let _alloc3 = budget.try_allocate(200)?;
     assert_eq!(budget.current_pressure()?, MemoryPressure::High);
 
-    let _alloc4 = budget.try_allocate(100, "reader4")?;
+    let _alloc4 = budget.try_allocate(100)?;
     assert_eq!(budget.current_pressure()?, MemoryPressure::Critical);
 
     Ok(())
@@ -43,11 +43,11 @@ fn test_memory_pressure_levels() -> Result<(), Box<dyn std::error::Error>> {
 fn can_do_emergency_allocation() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(2048)?;
 
-    let alloc1 = budget.try_allocate(1950, "reader1")?;
+    let alloc1 = budget.try_allocate(1950)?;
     assert!(alloc1.is_some());
 
     // Should fail — over budget
-    let alloc2 = budget.try_allocate(100, "reader2")?;
+    let alloc2 = budget.try_allocate(100)?;
     assert!(alloc2.is_none());
 
     assert_eq!(budget.current_pressure()?, MemoryPressure::Critical);
@@ -56,29 +56,11 @@ fn can_do_emergency_allocation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_recommended_chunk_size_adaptation() -> Result<(), Box<dyn std::error::Error>> {
-    let budget = MemoryBudget::new(1000)?;
-
-    assert_eq!(budget.recommended_chunk_size(1000)?, 1000);
-
-    let _alloc = budget.try_allocate(700, "reader1")?;
-    assert_eq!(budget.recommended_chunk_size(1000)?, 800);
-
-    let _alloc2 = budget.try_allocate(150, "reader2")?;
-    assert_eq!(budget.recommended_chunk_size(1000)?, 500);
-
-    let _alloc3 = budget.try_allocate(100, "reader3")?;
-    assert_eq!(budget.recommended_chunk_size(1000)?, 250);
-
-    Ok(())
-}
-
-#[test]
 fn can_report_memory_stats() -> Result<(), Box<dyn std::error::Error>> {
     let budget = MemoryBudget::new(10000)?;
 
-    let _alloc1 = budget.try_allocate(3000, "reader1")?;
-    let _alloc2 = budget.try_allocate(2000, "reader2")?;
+    let _alloc1 = budget.try_allocate(3000)?;
+    let _alloc2 = budget.try_allocate(2000)?;
 
     let stats = budget.usage_stats()?;
 

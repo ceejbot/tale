@@ -7,9 +7,7 @@ use std::collections::HashMap;
 
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use textwrap::termwidth;
 
-use crate::config;
 use crate::logpatterns::PrettyPrintable;
 use crate::logpatterns::formatting::*;
 
@@ -178,21 +176,14 @@ impl<'de> Deserialize<'de> for LogfmtLine {
 
 impl PrettyPrintable for LogfmtLine {
     fn write(&self, buffer: &mut bytes::BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
 
         // Write the level column
         let level = self.level();
         buffer.extend_from_slice(get_level_bytes(&level));
 
         // Write timestamp column if available and show_time is enabled
-        if show_time {
+        if metrics.show_time {
             buffer.extend_from_slice(b" ");
             if let Some(timestamp) = self.timestamp() {
                 write_timestamp_column(buffer, timestamp);
@@ -205,48 +196,31 @@ impl PrettyPrintable for LogfmtLine {
 
         // Format the message
         let message = self.message();
-        format_message(&message, buffer, padding, max_message_width);
+        format_message(&message, buffer, metrics.padding, metrics.max_message_width);
 
-        // Get all the cells for additional key-value pairs
+        // Cells for additional key-value pairs
         let cells = self.cells();
-        if !cells.is_empty() {
-            // Write the columns with proper padding for continuation lines
-            let mut column_buffer = bytes::BytesMut::new();
-            crate::logpatterns::columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
-
-            let column_output = String::from_utf8_lossy(&column_buffer);
-            for line in column_output.lines() {
-                if !line.trim().is_empty() {
-                    // Add padding
-                    for _ in 0..padding {
-                        buffer.extend_from_slice(b" ");
-                    }
-                    buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(line.as_bytes());
-                    buffer.extend_from_slice(b"\n");
-                }
-            }
-        }
+        write_cells_with_padding(buffer, &cells, &metrics);
 
         buffer.len()
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells = Vec::new();
-
         // Skip the primary fields we already displayed (level, message, timestamp)
-        let skip_keys = ["level", "lvl", "severity", "message", "msg", "timestamp", "ts", "time"];
+        const SKIP_KEYS: &[&str] = &["level", "lvl", "severity", "message", "msg", "timestamp", "ts", "time"];
 
+        let mut cells = Vec::new();
         for (key, value) in &self.pairs {
-            if !skip_keys.contains(&key.as_str()) {
-                let formatted_value = match value {
-                    LogValue::String(s) => s.green().to_string(),
-                    LogValue::Int(i) => i.bright_magenta().to_string(),
-                    LogValue::Float(f) => f.bright_magenta().to_string(),
-                    LogValue::Timestamp(ts) => ts.blue().to_string(),
-                };
-                cells.push(format!("{}={}", key.dimmed(), formatted_value));
+            if SKIP_KEYS.contains(&key.as_str()) {
+                continue;
             }
+            let formatted_value = match value {
+                LogValue::String(s) => s.green().to_string(),
+                LogValue::Int(i) => i.bright_magenta().to_string(),
+                LogValue::Float(f) => f.bright_magenta().to_string(),
+                LogValue::Timestamp(ts) => ts.blue().to_string(),
+            };
+            cells.push(format!("{}={}", key.dimmed(), formatted_value));
         }
 
         // Add bare strings if any
@@ -260,11 +234,6 @@ impl PrettyPrintable for LogfmtLine {
 
 impl std::fmt::Display for LogfmtLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = bytes::BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }

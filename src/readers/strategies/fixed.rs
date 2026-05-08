@@ -2,8 +2,6 @@
 //! and then doesn't vary it but chugs right on through. This is fine for
 //! single-file reading.
 
-use crate::defaults::io::READ_BUFFER_SIZE;
-
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
     pub chunk_size: usize,
@@ -11,30 +9,10 @@ pub struct StaticStrategy {
 }
 
 impl StaticStrategy {
-    pub fn conservative() -> Self {
-        let config = ChunkConfig {
-            overlap_size: 1024,
-            low_memory_mode: true,
-        };
-        let base_size = 4 * 1024 * 1024; // 4MB base
-        let aligned_size = align_to_block_size(base_size, get_optimal_block_size());
-        Self {
-            chunk_size: aligned_size,
-            config,
-        }
-    }
-
     pub fn optimal_for_file(file_size: u64) -> Self {
-        let config = ChunkConfig::optimal(file_size);
-        let chunk_size = optimal_chunk_size(file_size);
-        Self { chunk_size, config }
-    }
-
-    pub fn with_config(config: ChunkConfig) -> Self {
-        let aligned_size = align_to_block_size(READ_BUFFER_SIZE, get_optimal_block_size());
         Self {
-            chunk_size: aligned_size,
-            config,
+            chunk_size: optimal_chunk_size(file_size),
+            config: ChunkConfig::default(),
         }
     }
 
@@ -69,15 +47,6 @@ impl Default for ChunkConfig {
     fn default() -> Self {
         Self {
             overlap_size: 1024, // 1KB overlap for line boundaries
-            low_memory_mode: false,
-        }
-    }
-}
-
-impl ChunkConfig {
-    pub fn optimal(_file_size: u64) -> Self {
-        Self {
-            overlap_size: 1024,
             low_memory_mode: false,
         }
     }

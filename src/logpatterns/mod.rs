@@ -27,6 +27,17 @@ where
 {
     fn write(&self, buffer: &mut BytesMut) -> usize;
     fn cells(&self) -> Vec<String>;
+
+    /// Default `Display::fmt` body. Renders to a temporary buffer via `write`,
+    /// then forwards utf8 chunks to the formatter. Each variant's
+    /// `Display::fmt` impl is just `self.fmt_pretty(f)`.
+    fn fmt_pretty(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = BytesMut::with_capacity(2048);
+        self.write(&mut buffer);
+        buffer
+            .utf8_chunks()
+            .try_for_each(|chunk| write!(f, "{}", chunk.valid()))
+    }
 }
 
 /// An enum to help serde deserialize incoming log lines. There are some

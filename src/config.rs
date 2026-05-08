@@ -4,6 +4,27 @@
 
 use std::path::PathBuf;
 
+/// Read-only view of the parsed CLI options. The binary crate (`main.rs`)
+/// owns the clap-derived `Args` struct and implements this trait for it.
+/// Keeping the lib's config construction behind a trait keeps `clap` (and any
+/// future CLI parser) out of the library's public surface.
+pub trait CliOptions {
+    fn follow(&self) -> bool;
+    fn sticky(&self) -> bool;
+    fn bytes(&self) -> Option<i64>;
+    fn offset(&self) -> Option<i64>;
+    fn verbose(&self) -> bool;
+    fn quiet(&self) -> bool;
+    fn timestamps(&self) -> bool;
+    fn window(&self) -> u64;
+    fn chunked(&self) -> bool;
+    fn no_chunked(&self) -> bool;
+    fn max_memory(&self) -> Option<usize>;
+    fn args(&self) -> &[String];
+    #[cfg(debug_assertions)]
+    fn profile_json(&self) -> bool;
+}
+
 /// A sensible holder for our configuration.
 #[derive(Debug, Clone, Default)]
 pub struct ConfigOpts {
@@ -143,68 +164,43 @@ pub use runtime::{update, with_config};
 use crate::defaults::{SystemDefaults, get_system_config};
 use crate::errors::TaleError;
 
-// Public convenience accessors - these work with both implementations
+// Public convenience accessors. `config()` returns `&'static ConfigOpts` in
+// production (via OnceLock) and an owned `ConfigOpts` in tests (via
+// thread-local). Field access works on both.
 pub fn tailing() -> bool {
-    #[cfg(not(test))]
-    return config().tailing;
-    #[cfg(test)]
-    return config().tailing;
+    config().tailing
 }
 
 pub fn sticky() -> bool {
-    #[cfg(not(test))]
-    return config().sticky;
-    #[cfg(test)]
-    return config().sticky;
+    config().sticky
 }
 
 pub fn offset() -> i64 {
-    #[cfg(not(test))]
-    return config().offset;
-    #[cfg(test)]
-    return config().offset;
+    config().offset
 }
 
 pub fn offset_unit() -> OffsetUnit {
-    #[cfg(not(test))]
-    return config().offset_unit;
-    #[cfg(test)]
-    return config().offset_unit;
+    config().offset_unit
 }
 
 pub fn show_time() -> bool {
-    #[cfg(not(test))]
-    return config().show_time;
-    #[cfg(test)]
-    return config().show_time;
+    config().show_time
 }
 
 pub fn batch_window_ms() -> u64 {
-    #[cfg(not(test))]
-    return config().batch_window_ms;
-    #[cfg(test)]
-    return config().batch_window_ms;
+    config().batch_window_ms
 }
 
 pub fn force_chunked() -> bool {
-    #[cfg(not(test))]
-    return config().force_chunked;
-    #[cfg(test)]
-    return config().force_chunked;
+    config().force_chunked
 }
 
 pub fn disable_chunked() -> bool {
-    #[cfg(not(test))]
-    return config().disable_chunked;
-    #[cfg(test)]
-    return config().disable_chunked;
+    config().disable_chunked
 }
 
 pub fn mode() -> InputMode {
-    #[cfg(not(test))]
-    return config().mode.clone();
-    #[cfg(test)]
-    return config().mode;
+    config().mode.clone()
 }
 
 /// Unescape shell-escaped glob patterns (e.g., \* -> *, \? -> ?, \[ -> [)
@@ -300,38 +296,36 @@ fn handle_possible_paths(args: &[String]) -> Result<Vec<PathBuf>, TaleError> {
 }
 
 impl ConfigOpts {
-    pub fn new(args: &crate::Args) -> Result<Self> {
+    pub fn new(args: &impl CliOptions) -> Result<Self> {
         // Get production defaults
         let system_config = get_system_config();
-        let (mode, maybe_offset) = match args.args.len() {
+        let positional = args.args();
+        let (mode, maybe_offset) = match positional.len() {
             0 => (InputMode::Stdin, None),
             1 => {
-                let only = &args.args[0];
+                let only = &positional[0];
                 if (only.starts_with('-') || only.starts_with('+'))
                     && only.len() > 1
                     && let Ok(offset) = only.parse::<i64>()
                 {
                     // It's a numeric offset like "-4" or "+4"
                     (InputMode::Stdin, Some(offset))
+                } else if is_glob(only) {
+                    // It's a glob pattern, handle as multi-file
+                    let paths = handle_possible_paths(std::slice::from_ref(only))?;
+                    (InputMode::MultiFile { paths }, None)
                 } else {
-                    // It's a filename or a glob
-                    if is_glob(only) {
-                        // It's a glob pattern, handle as multi-file
-                        let paths = handle_possible_paths(vec![only.clone()].as_slice())?;
-                        (InputMode::MultiFile { paths }, None)
-                    } else {
-                        // It's a single filename (may or may not exist) - always treat as SingleFile
-                        (
-                            InputMode::SingleFile {
-                                path: PathBuf::from(only),
-                            },
-                            None,
-                        )
-                    }
+                    // It's a single filename (may or may not exist) - always treat as SingleFile
+                    (
+                        InputMode::SingleFile {
+                            path: PathBuf::from(only),
+                        },
+                        None,
+                    )
                 }
             }
             2 => {
-                let (first, second) = (&args.args[0], &args.args[1]);
+                let (first, second) = (&positional[0], &positional[1]);
 
                 // Check if first arg is an offset
                 if let Ok(offset) = first.parse::<i64>() {
@@ -344,21 +338,21 @@ impl ConfigOpts {
                     )
                 } else {
                     // Two file paths or globs: we're multifile for sure.
-                    let paths = handle_possible_paths(args.args.as_slice())?;
+                    let paths = handle_possible_paths(positional)?;
                     (InputMode::MultiFile { paths }, None)
                 }
             }
             _ => {
                 // More than two paths and/or globs.
                 // We still want to know if the first arg is an offset.
-                let paths = handle_possible_paths(args.args.as_slice())?;
+                let paths = handle_possible_paths(positional)?;
                 (InputMode::MultiFile { paths }, None)
             }
         };
 
-        let (offset, offset_unit) = if let Some(bytes) = args.bytes {
+        let (offset, offset_unit) = if let Some(bytes) = args.bytes() {
             (bytes, OffsetUnit::Bytes)
-        } else if let Some(lines) = args.offset {
+        } else if let Some(lines) = args.offset() {
             (lines, OffsetUnit::Lines)
         } else if let Some(offset) = maybe_offset {
             (offset, OffsetUnit::Lines)
@@ -367,7 +361,7 @@ impl ConfigOpts {
         };
 
         // Apply production defaults
-        let max_memory = args.max_memory.unwrap_or_else(|| {
+        let max_memory = args.max_memory().unwrap_or_else(|| {
             // Use production default memory budget
             let system_percentage = system_config.memory_percentage;
             if let Some(memory_stats) = memory_stats::memory_stats() {
@@ -381,9 +375,9 @@ impl ConfigOpts {
         });
 
         // Determine chunking behavior based on production defaults if not specified
-        let force_chunked = if args.chunked {
+        let force_chunked = if args.chunked() {
             true
-        } else if args.no_chunked {
+        } else if args.no_chunked() {
             false
         } else {
             // Use production default based on preset
@@ -391,20 +385,20 @@ impl ConfigOpts {
         };
 
         Ok(Self {
-            tailing: args.follow || args.sticky,
-            sticky: args.sticky,
+            tailing: args.follow() || args.sticky(),
+            sticky: args.sticky(),
             offset,
             offset_unit,
-            show_time: args.timestamps,
-            batch_window_ms: args.window,
+            show_time: args.timestamps(),
+            batch_window_ms: args.window(),
             mode,
             force_chunked,
-            disable_chunked: args.no_chunked,
-            no_file_names: args.quiet,
-            all_file_names: args.verbose,
+            disable_chunked: args.no_chunked(),
+            no_file_names: args.quiet(),
+            all_file_names: args.verbose(),
             max_memory: Some(max_memory),
             #[cfg(debug_assertions)]
-            profile_json: args.profile_json,
+            profile_json: args.profile_json(),
         })
     }
 }
@@ -413,25 +407,78 @@ impl ConfigOpts {
 mod tests {
     use super::*;
 
+    /// Minimal CliOptions impl for tests. Builds a struct with all fields
+    /// at their defaults; tests override the ones they care about.
+    #[derive(Default)]
+    struct TestArgs {
+        follow: bool,
+        sticky: bool,
+        bytes: Option<i64>,
+        offset: Option<i64>,
+        verbose: bool,
+        quiet: bool,
+        timestamps: bool,
+        window: u64,
+        chunked: bool,
+        no_chunked: bool,
+        max_memory: Option<usize>,
+        positional: Vec<String>,
+    }
+
+    impl CliOptions for TestArgs {
+        fn follow(&self) -> bool {
+            self.follow
+        }
+        fn sticky(&self) -> bool {
+            self.sticky
+        }
+        fn bytes(&self) -> Option<i64> {
+            self.bytes
+        }
+        fn offset(&self) -> Option<i64> {
+            self.offset
+        }
+        fn verbose(&self) -> bool {
+            self.verbose
+        }
+        fn quiet(&self) -> bool {
+            self.quiet
+        }
+        fn timestamps(&self) -> bool {
+            self.timestamps
+        }
+        fn window(&self) -> u64 {
+            self.window
+        }
+        fn chunked(&self) -> bool {
+            self.chunked
+        }
+        fn no_chunked(&self) -> bool {
+            self.no_chunked
+        }
+        fn max_memory(&self) -> Option<usize> {
+            self.max_memory
+        }
+        fn args(&self) -> &[String] {
+            &self.positional
+        }
+        #[cfg(debug_assertions)]
+        fn profile_json(&self) -> bool {
+            false
+        }
+    }
+
     #[test]
     fn complicated_args() {
-        let args = crate::Args {
+        // bytes=Some(-5) wins over the positional "-4" offset; mode stays stdin.
+        let args = TestArgs {
             timestamps: true,
             follow: true,
-            sticky: false,
-            blocks: None,
             bytes: Some(-5),
-            offset: None,
-            verbose: false,
-            quiet: false,
             window: 250,
-            chunked: false,
-            no_chunked: false,
-            args: vec!["-4".to_string()],
+            positional: vec!["-4".to_string()],
             max_memory: Some(10_000_000_000),
-            completions: None,
-            #[cfg(debug_assertions)]
-            profile_json: false,
+            ..Default::default()
         };
         let config = ConfigOpts::new(&args).expect("Config should be valid for test");
         assert_eq!(config.offset, -5);

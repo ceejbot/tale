@@ -120,7 +120,7 @@ pub mod memimpl {
         // let total = system.total_memory() as usize;
 
         let Some(process) = system.process(pid) else {
-            return free as usize;
+            return free;
         };
         let rss = process.memory() as usize;
         let max_allowed = crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);

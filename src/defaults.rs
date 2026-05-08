@@ -23,9 +23,6 @@ pub mod io {
 
     /// Default capacity for output byte buffers.
     pub const OUTPUT_BUFFER_CAPACITY: usize = 1024;
-
-    /// The initial chunk size to use for chunked readers.
-    pub const INITIAL_CHUNK_SIZE: usize = 32 * 1024; // 32K bytes
 }
 
 /// File processing thresholds and decision constants
@@ -51,14 +48,6 @@ pub mod memory {
 pub struct SystemDefaults;
 
 impl SystemDefaults {
-    /// Default memory budget as percentage of system memory
-    ///
-    /// Benchmark results show 10% provides good balance:
-    /// - Sufficient for most workloads
-    /// - Leaves headroom for system operations
-    /// - Scales appropriately with system size
-    pub const DEFAULT_MEMORY_PERCENTAGE: f64 = 10.0;
-
     /// Minimum memory budget (absolute floor)
     ///
     /// Below this, performance degrades significantly
@@ -81,11 +70,6 @@ impl SystemDefaults {
     ///
     /// Below this, overhead dominates performance
     pub const MIN_CHUNK_SIZE: usize = 4 * 1024; // 4KB (one block)
-
-    /// Maximum chunk size (performance ceiling)
-    ///
-    /// Larger chunks show diminishing returns
-    pub const MAX_CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
     /// Optimal chunk size for different file sizes
     pub fn optimal_chunk_for_file(file_size: u64) -> usize {
@@ -115,22 +99,6 @@ impl SystemDefaults {
         // Ensure block alignment
         base_size.div_ceil(BLOCK_SIZE) * BLOCK_SIZE
     }
-
-    /// Should use chunked processing by default?
-    pub fn should_chunk_by_default(file_size: u64) -> bool {
-        // Use chunked processing for files > 1MB
-        // Benchmarks show minimal overhead, better memory control
-        file_size > 1_048_576
-    }
-
-    /// Default batch window for multi-file processing (ms)
-    pub const DEFAULT_BATCH_WINDOW_MS: u64 = 250;
-
-    /// Default line buffer capacity
-    pub const DEFAULT_LINE_CAPACITY: usize = 512;
-
-    /// Default output buffer capacity
-    pub const DEFAULT_OUTPUT_BUFFER_CAPACITY: usize = 4096;
 
     /// Memory pressure thresholds (validated through benchmarking)
     pub const MEMORY_PRESSURE_LOW_THRESHOLD: f64 = 0.60; // < 60%: Normal
@@ -264,15 +232,6 @@ mod tests {
     }
 
     #[test]
-    fn chunking_decisions_are_good() {
-        // Should not chunk tiny files
-        assert!(!SystemDefaults::should_chunk_by_default(100_000));
-
-        // Should chunk files > 1MB
-        assert!(SystemDefaults::should_chunk_by_default(2_000_000));
-    }
-
-    #[test]
     fn presets_are_as_expected() {
         let low_mem = ConfigPreset::LowMemory.settings();
         assert_eq!(low_mem.memory_percentage, 5.0);
@@ -305,6 +264,5 @@ mod tests {
         assert_eq!(TAIL_FLUSH_INTERVAL.as_millis(), 250);
         assert_eq!(FLUSH_LINE_COUNT, 40);
         assert_eq!(READ_BUFFER_SIZE, 8192);
-        assert_eq!(INITIAL_CHUNK_SIZE, 32 * 1024);
     }
 }

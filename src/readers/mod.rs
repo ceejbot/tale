@@ -32,7 +32,7 @@ pub use strategies::*;
 use crate::defaults::io::*;
 use crate::defaults::processing::*;
 use crate::errors::{FileError, TaleError, find_similar_files};
-use crate::multiplexed::watcher::{MultiFileWatcher, WatchEvent, WatcherConfig};
+use crate::multiplexed::watcher::{MultiFileWatcher, WatchEvent};
 use crate::{config, process_line};
 
 /// Wait for a file to be created when using sticky mode
@@ -66,7 +66,7 @@ async fn wait_for_file_creation(target_path: &Path) -> Result<()> {
     })?;
 
     // Create a file watcher for the parent directory
-    let mut watcher = MultiFileWatcher::new(WatcherConfig::default());
+    let mut watcher = MultiFileWatcher::new();
 
     // Add the parent directory to watch
     watcher.add_files(vec![parent_dir]).await?;

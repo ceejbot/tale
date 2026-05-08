@@ -38,7 +38,6 @@ tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 criterion = "0.8"
-tempfile = "3.21"
 
 [[bench]]
 name = "chunking_strategies"

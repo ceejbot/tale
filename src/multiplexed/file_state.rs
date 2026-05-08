@@ -123,11 +123,6 @@ impl FileState {
         self.available && self.size > self.position
     }
 
-    /// Mark that we've read up to the given position
-    pub fn update_position(&mut self, new_position: u64) {
-        self.position = new_position;
-    }
-
     /// Read new lines from the file starting from the current position
     pub fn read_new_lines(&mut self) -> Result<Vec<String>, TaleError> {
         if !self.available || !self.has_new_data() {
@@ -224,14 +219,6 @@ impl FileStateManager {
         }
 
         Ok(changed_files)
-    }
-
-    /// Get all files that have new data available
-    pub fn files_with_new_data(&self) -> Vec<&PathBuf> {
-        self.states
-            .iter()
-            .filter_map(|(path, state)| if state.has_new_data() { Some(path) } else { None })
-            .collect()
     }
 
     /// Get all tracked file paths

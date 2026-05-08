@@ -4,7 +4,6 @@
 //! coordinating with the file state manager and batch processor.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use miette::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -29,48 +28,23 @@ pub enum WatchEvent {
     Error(String),
 }
 
-/// Configuration for the file watcher
-#[derive(Debug, Clone)]
-pub struct WatcherConfig {
-    /// How long to wait between file system checks
-    pub poll_interval: Duration,
-    /// Maximum number of events to buffer
-    pub event_buffer_size: usize,
-    /// Whether to use polling fallback for unreliable filesystems
-    pub use_polling: bool,
-}
-
-impl Default for WatcherConfig {
-    fn default() -> Self {
-        Self {
-            poll_interval: Duration::from_millis(100),
-            event_buffer_size: 1000,
-            use_polling: false,
-        }
-    }
-}
-
-/// Multi-file watcher using notify and async coordination
+/// Multi-file watcher using notify and async coordination.
+///
+/// `_watcher` and `_task_handle` are RAII guards: dropping the
+/// `MultiFileWatcher` stops the underlying notify watcher and joins the
+/// event-processing task. They're never read directly; the underscore prefix
+/// signals "kept alive on purpose".
 pub struct MultiFileWatcher {
-    /// Configuration for this watcher
-    _config: WatcherConfig,
-    /// File state manager
     file_manager: FileStateManager,
-    /// Channel for sending watch events
-    event_sender: Option<mpsc::UnboundedSender<WatchEvent>>,
-    /// The notify watcher instance
     _watcher: Option<RecommendedWatcher>,
-    /// Handle to the event processing task
     _task_handle: Option<JoinHandle<()>>,
 }
 
 impl MultiFileWatcher {
     /// Create a new MultiFileWatcher
-    pub fn new(_config: WatcherConfig) -> Self {
+    pub fn new() -> Self {
         Self {
-            _config,
             file_manager: FileStateManager::new(),
-            event_sender: None,
             _watcher: None,
             _task_handle: None,
         }
@@ -111,20 +85,19 @@ impl MultiFileWatcher {
         }
 
         // Spawn a task to process notify events and convert them to WatchEvents
-        let event_sender_clone = event_sender.clone();
         let task_handle = tokio::spawn(async move {
             while let Ok(result) = notify_receiver.recv() {
                 match result {
                     Ok(event) => {
                         if let Some(watch_event) = Self::convert_notify_event(event)
-                            && event_sender_clone.send(watch_event).is_err()
+                            && event_sender.send(watch_event).is_err()
                         {
                             break; // Receiver dropped
                         }
                     }
                     Err(e) => {
                         let error_event = WatchEvent::Error(format!("Notify error: {e}"));
-                        if event_sender_clone.send(error_event).is_err() {
+                        if event_sender.send(error_event).is_err() {
                             break; // Receiver dropped
                         }
                     }
@@ -132,54 +105,20 @@ impl MultiFileWatcher {
             }
         });
 
-        self.event_sender = Some(event_sender);
         self._watcher = Some(watcher);
         self._task_handle = Some(task_handle);
 
         Ok(event_receiver)
     }
 
-    /// Stop watching all files
-    pub async fn stop(&mut self) -> Result<(), TaleError> {
-        // Drop the watcher to stop file watching
-        self._watcher = None;
-
-        // Close the event sender to signal the task to exit
-        self.event_sender = None;
-
-        // Wait for the task to complete
-        if let Some(handle) = self._task_handle.take() {
-            let _ = handle.await;
-        }
-
-        Ok(())
-    }
-
     /// Convert a notify Event to our WatchEvent
     fn convert_notify_event(event: Event) -> Option<WatchEvent> {
         match event.kind {
-            EventKind::Modify(_) => {
-                // File was modified
-                event.paths.first().map(|path| WatchEvent::FileModified(path.clone()))
-            }
-            EventKind::Create(_) => {
-                // File was created
-                event.paths.first().map(|path| WatchEvent::FileCreated(path.clone()))
-            }
-            EventKind::Remove(_) => {
-                // File was deleted
-                event.paths.first().map(|path| WatchEvent::FileDeleted(path.clone()))
-            }
-            _ => {
-                // Other event types we don't handle yet
-                None
-            }
+            EventKind::Modify(_) => event.paths.first().map(|path| WatchEvent::FileModified(path.clone())),
+            EventKind::Create(_) => event.paths.first().map(|path| WatchEvent::FileCreated(path.clone())),
+            EventKind::Remove(_) => event.paths.first().map(|path| WatchEvent::FileDeleted(path.clone())),
+            _ => None,
         }
-    }
-
-    /// Get the current file state manager
-    pub fn file_manager(&self) -> &FileStateManager {
-        &self.file_manager
     }
 
     /// Get mutable access to the file state manager
@@ -188,12 +127,13 @@ impl MultiFileWatcher {
     }
 }
 
-/// Create a new multi-file watcher with default configuration
-pub fn create_watcher() -> MultiFileWatcher {
-    MultiFileWatcher::new(WatcherConfig::default())
+impl Default for MultiFileWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-/// Create a new multi-file watcher with custom configuration
-pub fn create_watcher_with_config(config: WatcherConfig) -> MultiFileWatcher {
-    MultiFileWatcher::new(config)
+/// Create a new multi-file watcher with default configuration
+pub fn create_watcher() -> MultiFileWatcher {
+    MultiFileWatcher::new()
 }

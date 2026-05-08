@@ -3,17 +3,76 @@
 //! specific but they're in the opposite order in this file.
 
 use std::borrow::Cow;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use bytes::BytesMut;
 use humansize::{BINARY, format_size};
 use serde::Deserialize;
+use serde::de::{self, Deserializer, Visitor};
 use serde_json::Value;
-use textwrap::termwidth;
 
+use super::PrettyPrintable;
 use super::formatting::*;
-use super::{PrettyPrintable, columns};
-use crate::config;
+
+/// Deserialize a JSON value that may be either a string or a number into
+/// `Option<Cow<'de, str>>`. Many real-world log producers (nginx, k8s, GCP)
+/// emit numeric values for fields like `status` and `size` that we want to
+/// surface as text. Without this, those producers' lines silently fall back
+/// to the GenericJson rendering path. Numeric values are formatted via
+/// their `Display` impl and allocated as `Cow::Owned`; strings stay borrowed.
+fn de_string_or_number<'de, D>(deserializer: D) -> Result<Option<Cow<'de, str>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<Cow<'de, str>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a string, number, or null")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Owned(v.to_owned())))
+        }
+        fn visit_borrowed_str<E: de::Error>(self, v: &'de str) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Borrowed(v)))
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Owned(v)))
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Owned(v.to_string())))
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Owned(v.to_string())))
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+            Ok(Some(Cow::Owned(v.to_string())))
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> Result<Self::Value, D2::Error> {
+            d.deserialize_any(V)
+        }
+    }
+
+    deserializer.deserialize_any(V)
+}
+
+/// Walk a `#[serde(flatten)]` rest field and emit one cell per entry.
+/// Object → one cell per key; the non-Object fallback (defensive — flatten
+/// always produces an object in practice) labels the value with key "rest".
+fn rest_to_cells(rest: &Value) -> Vec<String> {
+    match rest {
+        Value::Object(map) => map.iter().map(|(k, v)| colorize_map_entry(k, v)).collect(),
+        v => vec![colorize_map_entry("rest", v)],
+    }
+}
 
 /// We couldn't parse this json as a log line, even minimally, but it's
 /// json so we'll print it.
@@ -25,50 +84,27 @@ pub struct GenericJson {
 
 impl PrettyPrintable for &GenericJson {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
 
         buffer.extend_from_slice(JSON_HEADER);
-        if show_time {
-            buffer.extend_from_slice(b"                    ");
-            buffer.extend_from_slice(COL_SEP.as_bytes());
-        } else {
-            buffer.extend_from_slice(COL_SEP.as_bytes());
+        if metrics.show_time {
+            // Pad past the (omitted) timestamp column so cells start at the
+            // same column they'd start at if a timestamp were shown.
+            pad_spaces(buffer, MODULE_WIDTH);
         }
+        buffer.extend_from_slice(COL_SEP.as_bytes());
 
-        write_rest(*self, buffer, max_message_width, padding)
+        write_rest(*self, buffer, metrics.max_message_width, metrics.padding)
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells: Vec<String> = Vec::new();
-        match self.rest {
-            Value::Object(ref map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            _ => {
-                cells.push(colorize_map_entry("rest", &self.rest));
-            }
-        }
-        cells
+        rest_to_cells(&self.rest)
     }
 }
 
 impl Display for GenericJson {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }
 
@@ -85,50 +121,27 @@ pub struct Timestamped {
 
 impl Display for Timestamped {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }
 
 impl PrettyPrintable for &Timestamped {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
 
         buffer.extend_from_slice(JSON_HEADER);
-        if show_time {
+        if metrics.show_time {
             buffer.extend_from_slice(b" ");
             write_timestamp_column(buffer, &self.timestamp);
         } else {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
-        write_rest(*self, buffer, max_message_width, padding)
+        write_rest(*self, buffer, metrics.max_message_width, metrics.padding)
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells: Vec<String> = Vec::new();
-        match self.rest {
-            Value::Object(ref map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            _ => {
-                cells.push(colorize_map_entry("rest", &self.rest));
-            }
-        }
-        cells
+        rest_to_cells(&self.rest)
     }
 }
 
@@ -155,21 +168,29 @@ pub struct Message<'a> {
     /// Request URL
     #[serde(alias = "requestUrl", borrow)]
     pub(crate) url: Option<Cow<'a, str>>,
-    /// HTTP response status code
-    #[serde(alias = "statusCode", alias = "code", borrow)]
+    /// HTTP response status code (string or numeric in source JSON).
+    #[serde(
+        default,
+        alias = "statusCode",
+        alias = "code",
+        borrow,
+        deserialize_with = "de_string_or_number"
+    )]
     pub(crate) status: Option<Cow<'a, str>>,
     /// Request/response elapsed time
     #[serde(alias = "elapsed_ms", alias = "elapsed_time", alias = "latency", borrow)]
     pub(crate) elapsed: Option<Cow<'a, str>>,
-    /// Response size
+    /// Response size (string or numeric in source JSON).
     #[serde(
+        default,
         alias = "sent_bytes",
         alias = "length",
         alias = "written",
         alias = "bodylen",
         alias = "size",
         alias = "responseSize",
-        borrow
+        borrow,
+        deserialize_with = "de_string_or_number"
     )]
     pub(crate) size: Option<Cow<'a, str>>,
 
@@ -215,23 +236,33 @@ pub struct Message<'a> {
     pub(crate) function: Option<Cow<'a, str>>,
 
     // === Web Server Performance Fields (grouped for performance) ===
-    /// Response body bytes sent
-    #[serde(alias = "body_bytes_sent", borrow)]
+    /// Response body bytes sent (string or numeric in source JSON).
+    #[serde(default, alias = "body_bytes_sent", borrow, deserialize_with = "de_string_or_number")]
     pub(crate) response_bytes: Option<Cow<'a, str>>,
-    /// Total request processing time
-    #[serde(alias = "request_time", borrow)]
+    /// Total request processing time (string or numeric in source JSON).
+    #[serde(default, alias = "request_time", borrow, deserialize_with = "de_string_or_number")]
     pub(crate) request_duration: Option<Cow<'a, str>>,
-    /// Backend response time
-    #[serde(alias = "upstream_response_time", borrow)]
+    /// Backend response time (string or numeric in source JSON).
+    #[serde(
+        default,
+        alias = "upstream_response_time",
+        borrow,
+        deserialize_with = "de_string_or_number"
+    )]
     pub(crate) upstream_time: Option<Cow<'a, str>>,
-    /// Backend header time
-    #[serde(alias = "upstream_header_time", borrow)]
+    /// Backend header time (string or numeric in source JSON).
+    #[serde(
+        default,
+        alias = "upstream_header_time",
+        borrow,
+        deserialize_with = "de_string_or_number"
+    )]
     pub(crate) upstream_header_time: Option<Cow<'a, str>>,
     /// Backend server address
     #[serde(alias = "upstream_addr", borrow)]
     pub(crate) upstream_server: Option<Cow<'a, str>>,
-    /// Backend response status
-    #[serde(alias = "upstream_status", borrow)]
+    /// Backend response status (string or numeric in source JSON).
+    #[serde(default, alias = "upstream_status", borrow, deserialize_with = "de_string_or_number")]
     pub(crate) upstream_status: Option<Cow<'a, str>>,
     /// Request URI/path
     #[serde(alias = "uri", borrow)]
@@ -239,8 +270,8 @@ pub struct Message<'a> {
     /// Query string arguments
     #[serde(alias = "args", borrow)]
     pub(crate) query_args: Option<Cow<'a, str>>,
-    /// Request content length
-    #[serde(alias = "request_length", borrow)]
+    /// Request content length (string or numeric in source JSON).
+    #[serde(default, alias = "request_length", borrow, deserialize_with = "de_string_or_number")]
     pub(crate) request_size: Option<Cow<'a, str>>,
 
     // === Tracing/Observability Fields (grouped for performance) ===
@@ -282,31 +313,18 @@ pub struct Message<'a> {
 }
 
 impl<'a> Display for Message<'a> {
-    // second verse, same as the first
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }
 
 impl<'a> PrettyPrintable for &Message<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
         // Let's get absurd! Who wants to alloc, anyway?
         buffer.extend_from_slice(get_level_bytes(&self.level));
 
-        if show_time {
+        if metrics.show_time {
             if let Some(ref v) = self.timestamp {
                 // Add space + formatted timestamp + separator
                 buffer.extend_from_slice(b" ");
@@ -325,7 +343,7 @@ impl<'a> PrettyPrintable for &Message<'a> {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
-        format_message(&self.message, buffer, padding, max_message_width);
+        format_message(&self.message, buffer, metrics.padding, metrics.max_message_width);
 
         // Now we walk through all the other fields, treating some specially,
         // building our list of cells somewhat inefficiently. We pad everything
@@ -368,7 +386,9 @@ impl<'a> PrettyPrintable for &Message<'a> {
         }
 
         // if we didn't already snag the request id
-        if !show_time && let Some(ref v) = self.request_id {
+        if !metrics.show_time
+            && let Some(ref v) = self.request_id
+        {
             cells.push(colorize_map_entry("reqid", &Value::String(v.to_string())));
         }
 
@@ -540,53 +560,15 @@ impl<'a> PrettyPrintable for &Message<'a> {
             cells.push(colorize_map_entry("size", &Value::String(size.to_string())));
         }
 
-        match self.rest {
-            Value::Object(ref map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            _ => {
-                cells.push(colorize_map_entry("rest", &self.rest));
-            }
-        }
+        cells.extend(rest_to_cells(&self.rest));
 
-        // Write the columns with proper padding for continuation lines
-        if !cells.is_empty() {
-            let mut column_buffer = BytesMut::new();
-            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
+        write_cells_with_padding(buffer, &cells, &metrics);
 
-            let column_output = String::from_utf8_lossy(&column_buffer);
-            for line in column_output.lines() {
-                if !line.trim().is_empty() {
-                    // Add padding
-                    for _ in 0..padding {
-                        buffer.extend_from_slice(b" ");
-                    }
-                    buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(line.as_bytes());
-                    buffer.extend_from_slice(b"\n");
-                }
-            }
-        }
-
-        // if it is this easy I can get rid of the return value
         buffer.len()
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells: Vec<String> = Vec::new();
-        match &self.rest {
-            Value::Object(map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            v => {
-                cells.push(colorize_json_value(v));
-            }
-        }
-        cells
+        rest_to_cells(&self.rest)
     }
 }
 
@@ -615,24 +597,17 @@ pub struct Java<'a> {
 
 impl<'a> PrettyPrintable for Java<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
 
         buffer.extend_from_slice(get_level_bytes(&self.level));
-        if show_time {
+        if metrics.show_time {
             buffer.extend_from_slice(b" ");
             write_timestamp_column(buffer, &self.timestamp);
         } else {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
-        format_message(&self.message, buffer, padding, max_message_width);
+        format_message(&self.message, buffer, metrics.padding, metrics.max_message_width);
 
         let mut cells: Vec<String> = Vec::new();
 
@@ -647,70 +622,27 @@ impl<'a> PrettyPrintable for Java<'a> {
             &Value::String(format!("{} :: {}", self.class, self.method)),
         ));
         cells.push(colorize_map_entry("source", &Value::String(self.source.to_string())));
+        cells.extend(rest_to_cells(&self.rest));
 
-        match &self.rest {
-            Value::Object(map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            v => {
-                cells.push(colorize_json_value(v));
-            }
-        }
-
-        if !cells.is_empty() {
-            let mut column_buffer = BytesMut::new();
-            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
-
-            let column_output = String::from_utf8_lossy(&column_buffer);
-            for line in column_output.lines() {
-                if !line.trim().is_empty() {
-                    for _ in 0..padding {
-                        buffer.extend_from_slice(b" ");
-                    }
-                    buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(line.as_bytes());
-                    buffer.extend_from_slice(b"\n");
-                }
-            }
-        }
+        write_cells_with_padding(buffer, &cells, &metrics);
 
         if !self.stack_trace.is_empty() {
-            for _ in 0..padding {
-                buffer.extend_from_slice(b" ");
-            }
+            pad_spaces(buffer, metrics.padding);
             buffer.extend_from_slice(COL_SEP.as_bytes());
-            format_message(&self.stack_trace, buffer, padding, max_message_width);
+            format_message(&self.stack_trace, buffer, metrics.padding, metrics.max_message_width);
         }
 
         buffer.len()
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells: Vec<String> = Vec::new();
-        match &self.rest {
-            Value::Object(map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            v => {
-                cells.push(colorize_json_value(v));
-            }
-        }
-        cells
+        rest_to_cells(&self.rest)
     }
 }
 
 impl<'a> Display for Java<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }
 
@@ -737,24 +669,17 @@ pub struct Canonical<'a> {
 
 impl<'a> PrettyPrintable for &Canonical<'a> {
     fn write(&self, buffer: &mut BytesMut) -> usize {
-        let show_time = config::show_time();
-        let termwidth = termwidth();
-        let max_message_width = termwidth - LEVEL_WIDTH - MODULE_WIDTH - 4; // col spacers count
-        let padding = if show_time {
-            LEVEL_WIDTH + 1 + MODULE_WIDTH
-        } else {
-            LEVEL_WIDTH
-        };
+        let metrics = LayoutMetrics::current();
 
         buffer.extend_from_slice(get_level_bytes(&self.level));
-        if show_time {
+        if metrics.show_time {
             buffer.extend_from_slice(b" ");
             write_timestamp_column(buffer, &self.timestamp);
         } else {
             buffer.extend_from_slice(COL_SEP.as_bytes());
         }
 
-        format_message(&self.message, buffer, padding, max_message_width);
+        format_message(&self.message, buffer, metrics.padding, metrics.max_message_width);
 
         let sized = format_size(self.size, BINARY);
         let mut cells: Vec<String> = vec![
@@ -767,62 +692,21 @@ impl<'a> PrettyPrintable for &Canonical<'a> {
             colorize_map_entry("remote_host", &Value::String(self.remote_host.to_string())),
             colorize_map_entry("user_agent", &Value::String(self.user_agent.to_string())),
         ];
+        cells.extend(rest_to_cells(&self.rest));
 
-        match &self.rest {
-            Value::Object(map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            v => {
-                cells.push(colorize_json_value(v));
-            }
-        }
-
-        if !cells.is_empty() {
-            let mut column_buffer = BytesMut::new();
-            columns::write_columns(&mut column_buffer, &cells, max_message_width, 5);
-
-            let column_output = String::from_utf8_lossy(&column_buffer);
-            for line in column_output.lines() {
-                if !line.trim().is_empty() {
-                    for _ in 0..padding {
-                        buffer.extend_from_slice(b" ");
-                    }
-                    buffer.extend_from_slice(COL_SEP.as_bytes());
-                    buffer.extend_from_slice(line.as_bytes());
-                    buffer.extend_from_slice(b"\n");
-                }
-            }
-        }
+        write_cells_with_padding(buffer, &cells, &metrics);
 
         buffer.len()
     }
 
     fn cells(&self) -> Vec<String> {
-        let mut cells: Vec<String> = Vec::new();
-        match &self.rest {
-            Value::Object(map) => {
-                map.iter().for_each(|(key, value)| {
-                    cells.push(colorize_map_entry(key, value));
-                });
-            }
-            v => {
-                cells.push(colorize_json_value(v));
-            }
-        }
-        cells
+        rest_to_cells(&self.rest)
     }
 }
 
 impl<'a> Display for Canonical<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = BytesMut::with_capacity(2048);
-        self.write(&mut buffer);
-        buffer.utf8_chunks().try_for_each(|chunk| {
-            let c = chunk.valid();
-            write!(f, "{c}")
-        })
+        self.fmt_pretty(f)
     }
 }
 
@@ -833,7 +717,7 @@ mod tests {
     use jiff::Timestamp;
 
     use super::*;
-    use crate::config::ConfigOpts;
+    use crate::config::{self, ConfigOpts};
     use crate::logpatterns::{Printable, SourcedLine};
 
     #[test]
@@ -1009,6 +893,36 @@ mod tests {
         assert_eq!(parsed.container.as_ref().expect("text fixtures must work"), "coredns");
         assert_eq!(parsed.node.as_ref().expect("text fixtures must work"), "worker-node-1");
         assert!(parsed.timestamp.is_some());
+    }
+
+    #[test]
+    fn numeric_status_and_size_parse_into_message() {
+        // Real-world nginx/k8s logs often emit `status` and `size` as numbers,
+        // not strings. Before the de_string_or_number helper, this fell
+        // through to the GenericJson path and lost the HTTP-aware rendering.
+        let logline = r#"{
+            "level": "INFO",
+            "message": "request",
+            "method": "GET",
+            "url": "/foo",
+            "status": 404,
+            "size": 1234,
+            "body_bytes_sent": 999,
+            "request_length": 256,
+            "upstream_response_time": 0.42,
+            "upstream_header_time": 0.05,
+            "upstream_status": 200,
+            "request_time": 0.5
+        }"#;
+        let parsed = serde_json::from_str::<Message<'_>>(logline).expect("numeric fields should parse");
+        assert_eq!(parsed.status.as_deref(), Some("404"));
+        assert_eq!(parsed.size.as_deref(), Some("1234"));
+        assert_eq!(parsed.response_bytes.as_deref(), Some("999"));
+        assert_eq!(parsed.request_size.as_deref(), Some("256"));
+        assert_eq!(parsed.upstream_time.as_deref(), Some("0.42"));
+        assert_eq!(parsed.upstream_header_time.as_deref(), Some("0.05"));
+        assert_eq!(parsed.upstream_status.as_deref(), Some("200"));
+        assert_eq!(parsed.request_duration.as_deref(), Some("0.5"));
     }
 
     #[test]

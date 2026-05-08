@@ -44,7 +44,7 @@ fn bench_memory_allocation(c: &mut Criterion) {
     for (name, size) in allocation_sizes {
         group.bench_with_input(BenchmarkId::new("allocate_and_free", name), &size, |b, &size| {
             b.iter(|| {
-                if let Ok(Some(allocation)) = budget.try_allocate(size, "benchmark") {
+                if let Ok(Some(allocation)) = budget.try_allocate(size) {
                     black_box(&allocation);
                 }
             })
@@ -80,11 +80,11 @@ fn bench_memory_statistics(c: &mut Criterion) {
     let budget = MemoryBudget::new(100 * 1024 * 1024).expect("Failed to create budget");
 
     let _alloc1 = budget
-        .try_allocate(1024 * 1024, "test1")
+        .try_allocate(1024 * 1024)
         .expect("Failed to allocate")
         .expect("Allocation should succeed");
     let _alloc2 = budget
-        .try_allocate(2 * 1024 * 1024, "test2")
+        .try_allocate(2 * 1024 * 1024)
         .expect("Failed to allocate")
         .expect("Allocation should succeed");
 

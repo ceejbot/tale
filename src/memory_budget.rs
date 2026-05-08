@@ -10,7 +10,7 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let budget = MemoryBudget::new(100 * 1024 * 1024)?; // 100MB limit
 //!
-//! if let Some(allocation) = budget.try_allocate(4096, "reader_1")? {
+//! if let Some(allocation) = budget.try_allocate(4096)? {
 //!     // Process with allocated memory
 //!     allocation.deallocate(); // Automatic on drop
 //! }
@@ -40,18 +40,6 @@ pub enum MemoryPressure {
     High,
     /// Memory usage > 95% of limit
     Critical,
-}
-
-impl MemoryPressure {
-    /// Get the chunk size reduction factor for this pressure level
-    pub fn chunk_size_factor(&self) -> f64 {
-        match self {
-            MemoryPressure::Low => 1.0,
-            MemoryPressure::Moderate => 0.8,
-            MemoryPressure::High => 0.5,
-            MemoryPressure::Critical => 0.25,
-        }
-    }
 }
 
 /// A tracked memory allocation that frees on drop.
@@ -131,7 +119,7 @@ impl MemoryBudget {
     }
 
     /// Try to allocate memory. Returns None if over budget.
-    pub fn try_allocate(&self, size: usize, _reader_id: &str) -> Result<Option<MemoryAllocation>, TaleError> {
+    pub fn try_allocate(&self, size: usize) -> Result<Option<MemoryAllocation>, TaleError> {
         let mut state = self
             .inner
             .write()
@@ -173,12 +161,6 @@ impl MemoryBudget {
             peak_usage: state.peak_usage,
             pressure: state.pressure(),
         })
-    }
-
-    /// Get recommended chunk size based on current pressure
-    pub fn recommended_chunk_size(&self, base_size: usize) -> Result<usize, TaleError> {
-        let pressure = self.current_pressure()?;
-        Ok((base_size as f64 * pressure.chunk_size_factor()) as usize)
     }
 }
 
@@ -224,30 +206,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pressure_levels_work() {
-        assert_eq!(MemoryPressure::Low.chunk_size_factor(), 1.0);
-        assert_eq!(MemoryPressure::Moderate.chunk_size_factor(), 0.8);
-        assert_eq!(MemoryPressure::High.chunk_size_factor(), 0.5);
-        assert_eq!(MemoryPressure::Critical.chunk_size_factor(), 0.25);
-    }
-
-    #[test]
     fn memory_budget_allocation_works() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
 
-        let alloc1 = budget.try_allocate(500, "reader1")?;
+        let alloc1 = budget.try_allocate(500)?;
         assert!(alloc1.is_some());
 
-        let alloc2 = budget.try_allocate(400, "reader2")?;
+        let alloc2 = budget.try_allocate(400)?;
         assert!(alloc2.is_some());
 
         // Exceeds limit
-        let alloc3 = budget.try_allocate(200, "reader3")?;
+        let alloc3 = budget.try_allocate(200)?;
         assert!(alloc3.is_none());
 
         // After dropping first, should succeed
         drop(alloc1);
-        let alloc4 = budget.try_allocate(300, "reader4")?;
+        let alloc4 = budget.try_allocate(300)?;
         assert!(alloc4.is_some());
 
         Ok(())
@@ -257,29 +231,17 @@ mod tests {
     fn memory_pressure_calculation_works() -> Result<(), TaleError> {
         let budget = MemoryBudget::new(1000)?;
 
-        let _alloc1 = budget.try_allocate(500, "reader1")?;
+        let _alloc1 = budget.try_allocate(500)?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Low);
 
-        let _alloc2 = budget.try_allocate(150, "reader2")?;
+        let _alloc2 = budget.try_allocate(150)?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Moderate);
 
-        let _alloc3 = budget.try_allocate(200, "reader3")?;
+        let _alloc3 = budget.try_allocate(200)?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::High);
 
-        let _alloc4 = budget.try_allocate(100, "reader4")?;
+        let _alloc4 = budget.try_allocate(100)?;
         assert_eq!(budget.current_pressure()?, MemoryPressure::Critical);
-
-        Ok(())
-    }
-
-    #[test]
-    fn can_recommend_chunk_size() -> Result<(), TaleError> {
-        let budget = MemoryBudget::new(1000)?;
-
-        assert_eq!(budget.recommended_chunk_size(1000)?, 1000);
-
-        let _alloc = budget.try_allocate(700, "reader1")?;
-        assert_eq!(budget.recommended_chunk_size(1000)?, 800);
 
         Ok(())
     }
@@ -289,8 +251,8 @@ mod tests {
         let budget = MemoryBudget::new(1000)?;
 
         {
-            let _alloc1 = budget.try_allocate(500, "reader1")?;
-            let _alloc2 = budget.try_allocate(400, "reader2")?;
+            let _alloc1 = budget.try_allocate(500)?;
+            let _alloc2 = budget.try_allocate(400)?;
             let stats = budget.usage_stats()?;
             assert_eq!(stats.current_usage, 900);
         }

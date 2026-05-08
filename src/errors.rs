@@ -175,21 +175,6 @@ impl JsonError {
     }
 }
 
-/// Helper trait for converting std::io::Error to our IoError with context
-pub trait IoErrorExt<T> {
-    fn with_context(self, operation: &str, path: Option<&Path>) -> Result<T, IoError>;
-}
-
-impl<T> IoErrorExt<T> for Result<T, std::io::Error> {
-    fn with_context(self, operation: &str, path: Option<&Path>) -> Result<T, IoError> {
-        self.map_err(|e| IoError::OperationFailed {
-            operation: operation.to_string(),
-            path: path.map(|p| p.to_path_buf()),
-            source: e,
-        })
-    }
-}
-
 /// Automatic conversion from std::io::Error to our TaleError for easier use
 /// with ?
 impl From<std::io::Error> for TaleError {

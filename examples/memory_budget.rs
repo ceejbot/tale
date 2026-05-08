@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Created memory budget with 10MB limit");
 
-    // Simulate allocating memory for different readers
+    // Simulate allocating memory for different consumers
     simulate_reader_allocations(&budget, "log_reader_1", 1024 * 1024)?; // 1MB
     simulate_reader_allocations(&budget, "log_reader_2", 2 * 1024 * 1024)?; // 2MB
     simulate_reader_allocations(&budget, "log_reader_3", 4 * 1024 * 1024)?; // 4MB
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try to allocate more memory and see pressure response
     println!("\n--- Attempting large allocation (5MB) ---");
     let chunk_size = 5 * 1024 * 1024;
-    match budget.try_allocate(chunk_size, "large_reader")? {
+    match budget.try_allocate(chunk_size)? {
         Some(allocation) => {
             println!("Successfully allocated {} bytes", chunk_size);
 
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn simulate_reader_allocations(budget: &MemoryBudget, reader_name: &str, size: usize) -> Result<(), TaleError> {
     println!("\n--- Allocating memory for {} ---", reader_name);
 
-    match budget.try_allocate(size, reader_name)? {
+    match budget.try_allocate(size)? {
         Some(allocation) => {
             println!("Allocated {} bytes for {}", size, reader_name);
 

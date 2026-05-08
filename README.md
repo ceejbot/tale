@@ -4,6 +4,25 @@ A tail-compatible tool for pretty-printing `ndjson` files, especially logs.
 
 All I wanted was a newline-delimited json log pretty-printer, and they wouldn't give it to me. Then this happened. It's missing some polish and a few last small features, but is otherwise complete. If you want to `cat` or `tail` a log file with `ndjson` content, `tale` does a nice job with constant modest memory use. If you want to tail lots of of them, `tale`'s memory use scales predictably. It's more than fast enough.
 
+`tale` recognizes a handful of common log shapes — Stripe-style canonical HTTP logs, log4j/slf4j-style Java records, generic structured-message logs (with field aliases for nginx, k8s, GCP, OpenTelemetry, Docker, etc.), bare timestamped JSON, and [logfmt](https://brandur.org/logfmt). Lines that don't fit any of those are printed as-is.
+
+## Install
+
+```
+cargo install tale-ndjson
+```
+
+The binary is named `tale`.
+
+## Quick example
+
+```
+$ tale fixtures/just_loglines.log
+$ cat foo.log | tale
+$ tale -n -100 -f /var/log/app.log       # last 100 lines, then follow
+$ tale -f *.log                          # follow many files; lines sort by timestamp
+```
+
 ## Usage
 
 ```
@@ -56,7 +75,7 @@ Options:
 
 On my MacBook `tale` will pretty-print a million-line file at an approx rate of 387K lines/sec using just under 4MB of memory, steady.
 
-Tale has a set of benchmarks (`cargo bench`) and is optimized for both speed and memory efficiency with adaptive chunking strategies that automatically adjust to system resources and file characteristics. There are test generator scripts to help with this. `tale` behaves less well with those than with real-world log data. Real-world data is way more consistent than the test data is. Tale is CPU-bound on json deserialization, and it is fastest when deserializing into well-understood logging patterns.
+Tale has a set of benchmarks (`cargo bench`) and is optimized for both speed and memory efficiency: a static, file-size-aware chunk sizer, zero-copy JSON deserialization (`Cow<'a, str>` everywhere), and pre-compiled ANSI escape sequences. There are test generator scripts to help benchmark; `tale` behaves less well with those than with real-world log data because real-world data is way more consistent than synthetic data is. Tale is CPU-bound on JSON deserialization, and it is fastest when deserializing into well-understood logging patterns — adding a custom `Printable` variant for a new shape is the path to speed.
 
 To that point: If there is a specific json logging pattern you use that `tale` does not support directly, please give me some samples-- anonymized if you prefer-- and I'll implement deserialization and pretty-printing specifically for that pattern. It's more than fast enough, however, and it's just memory use I watch carefully.
 

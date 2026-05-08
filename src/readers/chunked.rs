@@ -12,11 +12,11 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::FileProcessor;
 use crate::errors::TaleError;
-use crate::readers::strategies::{ChunkConfig, StaticStrategy};
+use crate::readers::strategies::StaticStrategy;
 
 /// A chunk of file data with metadata about its position
 #[derive(Debug)]
@@ -91,8 +91,6 @@ pub struct ChunkedFileReader {
     file_size: u64,
     /// Our current position in the file we're reading.
     current_position: u64,
-    /// The path of the file we're reading from
-    _path: PathBuf,
     /// Data from previous chunk that didn't end at line boundary
     pending_data: Vec<u8>,
     /// Chunk sizing strategy
@@ -103,24 +101,13 @@ impl ChunkedFileReader {
     /// Create a new ChunkedFileReader
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
         let file_size = std::fs::metadata(&path)?.len();
-
-        // Get strategy from global config
-        #[cfg(not(test))]
-        let strategy = StaticStrategy::from_config(crate::config::config(), Some(file_size));
-        #[cfg(test)]
-        let strategy = StaticStrategy::from_config(&crate::config::config(), Some(file_size));
-
-        let path = path.as_ref().to_path_buf();
-
-        let mut file = File::open(&path)?;
-        file.seek(SeekFrom::End(0))?;
-        file.seek(SeekFrom::Start(0))?;
+        let strategy = StaticStrategy::optimal_for_file(file_size);
+        let file = File::open(&path)?;
 
         Ok(Self {
             file,
             file_size,
             current_position: 0,
-            _path: path,
             pending_data: Vec::new(),
             strategy,
         })
@@ -133,25 +120,17 @@ impl ChunkedFileReader {
         Ok(reader)
     }
 
-    /// Pick the optimal chunk size and stick with it
+    /// Pick the optimal chunk size and stick with it.
+    ///
+    /// Equivalent to `Self::new`; kept as an explicit name for callers (mainly
+    /// benches) that want to make the static-sizing intent obvious.
     pub fn static_optimal<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
-        let mut reader = Self::new(&path)?;
-        let file_size = reader.file_size;
-        let strategy = StaticStrategy::optimal_for_file(file_size);
-        reader.strategy = strategy;
-        Ok(reader)
-    }
-
-    pub fn new_with_config<P: AsRef<Path>>(path: P, config: ChunkConfig) -> Result<Self, TaleError> {
-        let mut reader = Self::new(&path)?;
-        let strategy = StaticStrategy::with_config(config);
-        reader.strategy = strategy;
-        Ok(reader)
+        Self::new(path)
     }
 
     /// Create a ChunkedFileReader with optimal configuration for the file
     pub fn with_optimal_config<P: AsRef<Path>>(path: P) -> Result<Self, TaleError> {
-        Self::static_optimal(path)
+        Self::new(path)
     }
 
     /// Get the file size
@@ -229,12 +208,6 @@ impl ChunkedFileReader {
         self.pending_data.clear();
 
         Ok(new_pos)
-    }
-
-    /// Reset to the beginning of the file
-    pub fn reset(&mut self) -> Result<(), TaleError> {
-        self.seek(SeekFrom::Start(0))?;
-        Ok(())
     }
 }
 

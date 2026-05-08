@@ -11,9 +11,9 @@ mod batch;
 mod file_state;
 pub mod watcher;
 
+use crate::config;
 use crate::errors::TaleError;
 use crate::logpatterns::*;
-use crate::{config, process_line};
 
 /// Handle multi-file static mode (read all files once, no following)
 pub fn handle_static(paths: Vec<PathBuf>) -> Result<()> {
@@ -58,7 +58,7 @@ pub fn handle_static(paths: Vec<PathBuf>) -> Result<()> {
     for wrapped in all_sourced_lines {
         wrapped.write(&mut buffer);
         outlock.write_all(buffer.chunk()).into_diagnostic()?;
-        outlock.write_all(&[0x0a; 1]).into_diagnostic()?; // blank line
+        outlock.write_all(b"\n").into_diagnostic()?; // blank line between log entries
         buffer.clear();
     }
 
@@ -71,51 +71,34 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<()> {
     use batch::{BatchConfig, BatchedLine, batched_with_config};
     use watcher::{WatchEvent, create_watcher};
 
-    // Create the file watcher
     let mut watcher = create_watcher();
-
-    // Add files to watch
     watcher.add_files(paths).await?;
 
-    // Create batch processor with configuration from CLI
     let batch_config = BatchConfig {
         batch_window: Duration::from_millis(config::batch_window_ms()),
         max_batch_size: 1000,
-        _max_buffer_memory: 10 * 1024 * 1024,
     };
     let mut batch_processor = batched_with_config(batch_config);
-
-    // Start the batch processor
     let (line_sender, mut batch_receiver) = batch_processor.start().await?;
 
-    // Start watching files
     let mut watch_events = watcher.watch().await?;
 
-    // Set up output
     let mut outlock = io::stdout().lock();
-    let mut buffer = BytesMut::with_capacity(2048);
 
-    // Main coordination loop
+    // Main coordination loop. Lines are pre-rendered inside `BatchedLine::new`,
+    // so all this loop has to do is sort them by timestamp and ship the bytes.
     loop {
         tokio::select! {
-            // Handle file system events
             watch_event = watch_events.recv() => {
                 match watch_event {
                     Some(WatchEvent::FileModified(path)) => {
-                        // File was modified, read new lines
                         if let Some(state) = watcher.file_manager_mut().get_state_mut(&path)
                             && let Ok(_changed) = state.refresh()
                             && let Ok(new_lines) = state.read_new_lines() {
-                            // Send lines to batch processor
                             for (line_num, line) in new_lines.into_iter().enumerate() {
-                                let batched_line = BatchedLine::new(
-                                    line,
-                                    path.clone(),
-                                    line_num as u64
-                                );
-                                match line_sender.send(batched_line) {
-                                    Ok(v) => v,
-                                    Err(_) => return Err(TaleError::BatchedLineSender.into())
+                                let batched_line = BatchedLine::new(line, path.clone(), line_num);
+                                if line_sender.send(batched_line).is_err() {
+                                    return Err(TaleError::BatchedLineSender.into());
                                 }
                             }
                         }
@@ -124,29 +107,21 @@ pub async fn handle_tailing(paths: Vec<PathBuf>) -> Result<()> {
                         eprintln!("Watch error: {err}");
                     }
                     Some(_) => {
-                        // Other events (create, delete) - could handle these in future
+                        // Other events (create, delete) — not handled yet.
                     }
-                    None => {
-                        // Watcher stopped
-                        break;
-                    }
+                    None => break, // Watcher stopped.
                 }
             }
 
-            // Handle sorted batches from batch processor
             batch = batch_receiver.recv() => {
                 match batch {
                     Some(sorted_lines) => {
-                        // Output the sorted batch
                         for batched_line in sorted_lines {
-                            process_line(&batched_line.content, &mut buffer, &mut outlock)?;
+                            outlock.write_all(&batched_line.rendered).into_diagnostic()?;
                         }
                         outlock.flush().into_diagnostic()?;
                     }
-                    None => {
-                        // Batch processor stopped
-                        break;
-                    }
+                    None => break, // Batch processor stopped.
                 }
             }
         }

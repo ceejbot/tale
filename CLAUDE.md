@@ -47,74 +47,102 @@ Install via homebrew if these are missing.
 
 ## Code Architecture
 
-### Core Structure
-The application is organized into specialized modules and a readers subsystem:
+The crate is split into a binary (`src/main.rs`) and a library (`src/lib.rs`).
+The binary owns CLI parsing; the library owns everything else and stays free of
+clap so it isn't a polluted dependency for any future library consumer.
 
-1. **`src/main.rs`** - Application entry point and mode handlers:
-   - Tokio async runtime coordination
-   - Multi-file static and tailing mode implementations
-   - Command-line argument parsing with clap
-   - Process coordination between components
+### Top-level files
+- **`src/main.rs`** — binary entry point. Owns the clap-derived `Args` struct,
+  implements `tale_ndjson::config::CliOptions` for it, runs the tokio runtime,
+  and dispatches to one of `readers::handle_stdin`, `readers::handle_file`, or
+  `multiplexed::handle_static` / `multiplexed::handle_tailing` based on
+  `InputMode`.
+- **`src/lib.rs`** — library root. Re-exports the small public surface
+  (`TaleError`, `MemoryBudget`, `MemoryPressure`, `StaticStrategy`,
+  `ChunkedFileReader`, `FileProcessor`) and exposes only the modules consumers
+  actually need (`config`, `metrics`, `multiplexed`, `readers`). Provides
+  `process_line` and `strip_line_ending` helpers.
+- **`src/config.rs`** — `ConfigOpts` struct, the `CliOptions` trait that
+  decouples the lib from clap, the `OnceLock` (production) /
+  `RefCell` (tests) runtime split for global config, and accessor functions.
+  Handles glob expansion and positional-args parsing.
+- **`src/defaults.rs`** *(crate-private)* — chunk-size constants, memory
+  pressure thresholds, system memory presets (`LowMemory`, `Balanced`, …),
+  and `optimal_chunk_for_file`.
+- **`src/errors.rs`** *(crate-private)* — `TaleError` and friends
+  (`FileError`, `JsonError`, `ConfigError`, `IoError`) built with `thiserror`
+  + `miette`. Includes edit-distance "did you mean?" suggestions for ENOENT.
+- **`src/json_profiler.rs`** *(debug-only)* — atomic counters tracking which
+  `Printable` variant each line parses into. Compiled in only when
+  `cfg(debug_assertions)`; excluded from release builds entirely.
+- **`src/memory_budget.rs`** *(crate-private)* — `MemoryBudget` with
+  four-level pressure (`Low`/`Moderate`/`High`/`Critical`) and RAII allocation
+  tracking. Re-exported at the lib root.
 
-2. **`src/config.rs`** - Centralized configuration management:
-   - `ConfigOpts` struct with comprehensive tail-compatible options
-   - Global `OnceLock` configuration with accessor functions
-   - Intelligent argument parsing with glob pattern expansion
-   - Support for `-f`/`-F`, offset modes (`-n`, `-c`, `-b`), and batch windows
-   - `InputMode` enum distinguishing stdin, single-file, and multi-file modes
+### `src/logpatterns/` — log parsing and formatting
 
-3. **`src/logpatterns/`** - Log parsing and formatting subsystem:
-   - `patterns.rs` - `Printable` enum for different log types with memory-efficient boxing
-   - `Canonical` struct for strict HTTP logs (25-34% faster)
-   - `Message` struct for flexible structured log entries with aliases
-   - `formatting.rs` - Direct buffer writing with pre-compiled ANSI sequences
-   - `columns.rs` - Custom column layout engine with ANSI-aware width calculation
-   - `sourced.rs` - Wrapper for multi-file source tracking
+- **`mod.rs`** — `PrettyPrintable` trait (with default `fmt_pretty` method)
+  and the `Printable<'a>` enum. The enum is `#[serde(untagged)]` and ordered
+  most-specific to least-specific; deserialization tries each variant in
+  turn. Variants are boxed where the inner type is large.
+- **`patterns.rs`** — the variant types: `Canonical`, `Java`, `Message`,
+  `Timestamped`, `GenericJson`. `Canonical` is the strictly-typed fast path
+  for Stripe-style HTTP logs. `Message` is the flexible superset (handles
+  nginx, k8s, GCP, Docker, OpenTelemetry via field aliases). Includes
+  `de_string_or_number` for fields like `status` and `size` that real
+  producers emit either as strings or as numbers.
+- **`logfmt.rs`** — `LogfmtLine` for Heroku-style `key=value` lines.
+- **`formatting.rs`** — `LayoutMetrics` (one place that knows the column
+  geometry), `pad_spaces`, `write_cells_with_padding`, level/timestamp
+  column writers, and the unified `colorize_map_entry` /
+  `colorize_json_value` helpers. Each `Printable` variant uses
+  `LayoutMetrics::current()` rather than recomputing layout dimensions
+  inline.
+- **`columns.rs`** — elastic-tabstop column layout (uses `tabwriter`),
+  ANSI-aware width calculation.
+- **`sourced.rs`** — `SourcedLine<'a>` wraps a `Printable` with a path and
+  line number; renders `==> filename <==` headers in multi-file mode.
 
-4. **`src/readers/`** - File processing abstraction layer:
-   - `mod.rs` - `FileProcessor` trait and processor selection logic
-   - `buffered.rs` - `BufferedFileProcessor` for small files with forward-only reading
-   - `chunked.rs` - `ChunkedFileReader` for memory-efficient large file processing
-   - `backseeking.rs` - `BackSeekingProcessor` for tail-like backward seeking (handles negative offsets)
-   - `stdin.rs` - `StdinProcessor` for consolidated stdin handling with offset support
-   - `strategies/` - `StaticStrategy` for file-size-based chunk sizing
-   - Smart processor selection based on file size and offset requirements
+### `src/readers/` — file processing
 
-5. **`src/file_state.rs`** - File state tracking for multi-file tailing:
-   - Individual file position tracking with inode-based rotation detection
-   - `FileStateManager` for coordinating multiple file states
-   - Support for sticky (`-F`) vs follow (`-f`) semantics
-   - Efficient new-line reading from specific file positions
+- **`mod.rs`** — `FileProcessor` trait, `FileProcessorType<'a>` enum
+  dispatching across the four implementations, and `create_file_processor`
+  which picks the right processor based on file size and offset shape.
+  Also contains `handle_file` and `wait_for_file_creation` (sticky mode).
+- **`buffered.rs`** — `BufferedFileProcessor` for small files
+  (forward-only `BufRead`).
+- **`chunked.rs`** — `ChunkedFileReader` for large files with
+  bounded-memory chunked reads and pending-data carryover for
+  cross-chunk lines.
+- **`backseeking.rs`** — `BackSeekingProcessor` for negative offsets,
+  byte offsets, and tailing. Walks backward from EOF in 8KB chunks until
+  the requested number of newlines is found.
+- **`stdin.rs`** — `StdinProcessor` for stdin with all the offset modes
+  (`skip_lines`, `skip_bytes`, `backtrack_lines`, `backtrack_bytes`,
+  `tail`). Includes `CircularByteBuffer` for last-N-bytes operations and
+  a temp-file fallback for `backtrack_lines` past the 10MB memory budget.
+- **`strategies/`** — `StaticStrategy` and `ChunkConfig`: file-size-aware
+  but otherwise static chunk sizing.
 
-6. **`src/watcher.rs`** - File system event monitoring:
-   - Cross-platform file watching using `notify` crate
-   - Async event conversion and coordination via tokio channels
-   - Integration with file state manager for change detection
-   - Support for multiple file watching with event aggregation
+### `src/multiplexed/` — multi-file static + tailing
 
-7. **`src/batch.rs`** - Multi-file line batching and timestamp sorting:
-   - Time-windowed batching for chronological log line ordering
-   - Priority queue-based sorting by extracted timestamps
-   - Async processing pipeline with configurable batch windows
-   - Support for mixed timestamped/non-timestamped log lines
+- **`mod.rs`** — `handle_static` (read all files once, sort
+  chronologically, emit) and `handle_tailing` (watch for changes, batch,
+  emit). Both route through `SourcedLine` so file-name headers work
+  consistently.
+- **`batch.rs`** — `BatchedLine` (carries pre-rendered output bytes plus
+  a sort timestamp) and `BatchProcessor` (window-based batching with a
+  min-heap on the sort key). `BatchedLine::new` parses each line *once*
+  into `Printable`, extracts the timestamp, and renders to bytes — no
+  double-parse.
+- **`file_state.rs`** — `FileState` (per-file position + inode rotation
+  tracking) and `FileStateManager`.
+- **`watcher.rs`** — `MultiFileWatcher` wrapping `notify`, with
+  `WatchEvent` enum and tokio channels for async event delivery.
 
-8. **`src/errors.rs`** - Rich error handling with thiserror + miette:
-   - Comprehensive error types with diagnostic information
-   - File errors with similarity suggestions (edit distance algorithm)
-   - JSON errors with source location tracking
-   - I/O errors with proper context
-   - Color-coded error messages using `owo-colors`
-
-9. **`src/metrics/`** - Performance monitoring:
-   - `collector.rs` - `ChunkMetrics` for basic performance tracking (chunks seen, bytes, duration)
-   - `memory.rs` - System memory detection and pressure monitoring
-   - Cross-platform memory statistics integration
-
-10. **`src/memory_budget.rs`** - Memory allocation management:
-    - `MemoryBudget` for tracking and limiting memory usage
-    - Four-level pressure detection (Low, Moderate, High, Critical)
-    - Allocation tracking with automatic cleanup on drop
-    - Memory statistics and reporting
+### `src/metrics/`
+- **`collector.rs`** — `ChunkMetrics` (chunks seen, bytes, duration).
+- **`memory.rs`** — system memory pressure detection via `sysinfo`.
 
 ### Key Data Structures
 
@@ -132,11 +160,16 @@ The application is organized into specialized modules and a readers subsystem:
 - All string fields use `Cow<'a, str>` for zero-copy when possible
 - Flexible JSON handling via `#[serde(flatten)]` for additional fields
 
-**Printable enum** - Memory-optimized with boxed variants:
-- `Canonical(Box<Canonical<'a>>)` - Fastest path for structured HTTP logs
-- `Message(Box<Message<'a>>)` - Flexible log parsing
-- `Json(GenericJson)` - Generic JSON objects
-- Enum size optimized from 360 → ~40 bytes via boxing
+**Printable enum** - Memory-optimized with boxed variants. Variants are tried
+most-specific to least-specific via `#[serde(untagged)]`:
+- `Canonical(Box<Canonical<'a>>)` - strictly-typed HTTP log (fastest path)
+- `Java(Box<Java<'a>>)` - log4j/slf4j-style Java records with stack traces
+- `Message(Box<Message<'a>>)` - flexible structured log (the superset path)
+- `TimeOnly(Timestamped)` - JSON we recognize *only* by timestamp
+- `Json(GenericJson)` - any other JSON object
+- `Logfmt(LogfmtLine)` - `key=value` lines (Heroku-style)
+- `Text(String)` - plain text fallback
+- Enum size optimized via boxing (Canonical/Java/Message are large)
 
 **BackSeekingProcessor struct** - Handles backward seeking and tail-like behavior:
 - Specialized for negative offsets and byte-based operations
@@ -270,7 +303,7 @@ The application is highly optimized and fully functional with:
   - Inode-based file rotation detection
   - Support for both static (read-once) and tailing modes
 - ✅ **Production Ready**: All major functionality complete and tested
-  - Comprehensive test suite (90 tests passing)
+  - Comprehensive test suite (88 tests passing)
   - Multi-file functionality thoroughly validated
   - Performance benchmarks demonstrate significant improvements
   - Memory management handles resource constraints gracefully
@@ -290,13 +323,15 @@ The application is highly optimized and fully functional with:
 3. **Memory Management**: Budget allocation, pressure detection, and graceful degradation
 4. **Performance Optimization**: 28-37% faster processing with zero-copy deserialization
 5. **Uniform Colorization**: All log types use `colorize_map_entry()` as single source of truth
-6. **Comprehensive Testing**: 90 tests passing with benchmark suite
+6. **Comprehensive Testing**: 88 tests passing with benchmark suite
 7. **Rich Error Handling**: Diagnostic messages with helpful suggestions
+8. **Logfmt support**: `LogfmtLine` is a first-class `Printable` variant for Heroku-style key=value lines.
+9. **Numeric-or-string fields in `Message`**: HTTP fields like `status` and `size` accept either string or number JSON values via the `de_string_or_number` deserializer; previously a numeric `status` silently fell through to the GenericJson path.
 
 ### Future Enhancements (Optional)
 1. **Chunk Pooling**: Vec<u8> recycling for high-throughput scenarios (5-15% improvement)
 2. **Time-based Offsets**: Advanced log analysis with timestamp-based seeking
-3. **Format Extensions**: Support for other structured log formats (logfmt, etc.)
+3. **Format Extensions**: Other structured log formats beyond logfmt
 4. **Layout Redesign**: Improved column packing and visual layout for field display
 
 ### Maintenance Tasks
@@ -304,6 +339,10 @@ The application is highly optimized and fully functional with:
 2. **Performance Monitoring**: Regular benchmarking to prevent regressions  
 3. **Cross-platform Testing**: Validate functionality across different systems
 4. **Dependency Updates**: Keep dependencies current for security and performance
+
+## Project memory
+
+This project uses the trivia MCP. All memories are tagged `project:tale-ndjson`. Recall by that tag at the start of work (`recall("project:tale-ndjson")` or query with the tag filter). Add new lessons via the `session-retro` skill rather than writing one-off notes here.
 
 ## Recent Work
 
@@ -329,3 +368,42 @@ The application is highly optimized and fully functional with:
 - Removed dead code: `start_new_line()`, unused imports
 
 **Net result**: ~1100 lines of over-engineered code removed, zero functionality lost, all 90 tests passing
+
+### 2026-05-07: Mental-model alignment
+
+A holistic review surfaced a long tail of "the docs say one thing, the code says another" drift, plus dead-code threads from the 2026-02-21 cleanup that hadn't been fully pulled. This commit fixed all of it in one pass.
+
+**Doc/code sync**:
+- README dropped the bogus "adaptive chunking strategies that automatically adjust" claim (those were deleted on 2026-02-21).
+- CLAUDE.md realigned: every module path, the actual `Printable` variant set, the `lib.rs` / binary split, the `defaults.rs` / `json_profiler.rs` / `logfmt.rs` modules that were never previously documented.
+
+**Dead code removed**:
+- Methods: `MultiFileWatcher::stop`, `create_watcher_with_config`, `FileStateManager::update_position`, `files_with_new_data`, `StaticStrategy::conservative` / `with_config` / `from_config`, `ChunkedFileReader::new_with_config` / `reset`, `MemoryBudget::recommended_chunk_size` (and `MemoryPressure::chunk_size_factor`), `IoErrorExt` trait.
+- Fields: `BatchedLine.parsed_json` / `_source_file` / `_line_number`, `BatchConfig._max_buffer_memory`, `_path` on `ChunkedFileReader`, `_config` on `MultiFileWatcher`, `WatcherConfig` (entire type), `_reader_id` parameter on `try_allocate`, `_config` parameter on the gone `from_config`.
+- Constants: `INITIAL_CHUNK_SIZE`, `DEFAULT_MEMORY_PERCENTAGE`, `MAX_CHUNK_SIZE`, `DEFAULT_BATCH_WINDOW_MS`, `DEFAULT_LINE_CAPACITY`, `DEFAULT_OUTPUT_BUFFER_CAPACITY`, `should_chunk_by_default`.
+- Misc: commented-out `tokio::time::timeout` import, three deleted dead-code tests.
+
+**Real correctness fix — double-parse on tail path**: `BatchedLine` used to deserialize each tailed line into `serde_json::Value` solely to extract a timestamp, throw the parsed Value away, then `process_line` re-parsed the same line into `Printable` to render. Now `BatchedLine::new` parses *once* into `Printable`, extracts the timestamp through `SourcedLine::timestamp()`, and pre-renders to bytes. The `handle_tailing` consumer just writes those bytes. As a side effect, multi-file tailing now also gets `==> filename <==` headers (which it didn't before, because it bypassed `SourcedLine`).
+
+**Real correctness fix — numeric `status`/`size` in Message**: previously `Option<Cow<'a, str>>` only deserialized JSON strings; nginx/k8s logs emit these fields as numbers and were silently falling through to the `GenericJson` path, losing the HTTP-aware rendering. Added a `de_string_or_number` visitor that accepts either string or number (allocates only on the number path) and applied it to `status`, `size`, `response_bytes`, `request_size`, `request_duration`, `upstream_time`, `upstream_header_time`, and `upstream_status`.
+
+**DRY consolidation in `logpatterns/`** (~150 lines removed):
+- Added `LayoutMetrics::current()` so each variant computes terminal-width / padding / show-time once. Was duplicated 6 times across `patterns.rs` and `logfmt.rs`.
+- Added `write_cells_with_padding` helper. Was duplicated 4 times.
+- Added `pad_spaces` helper using `BytesMut::resize` instead of `for _ in 0..N { extend(b" ") }` loops.
+- Added `rest_to_cells` helper for walking a `#[serde(flatten)]` field.
+- Added a default `fmt_pretty` method on `PrettyPrintable`. Each `Display::fmt` impl is now one line (`self.fmt_pretty(f)`) instead of seven.
+- `colorize_json_value` and `colorize_map_entry` consolidated; the shared scalar logic lives in one place.
+
+**Visibility tightening**:
+- `defaults`, `errors`, `memory_budget`, `logpatterns` are now `pub(crate)` (still accessible via re-exports for `TaleError`, `MemoryBudget`, `MemoryPressure`).
+- `json_profiler` is `#[cfg(debug_assertions)]` — released builds don't include it at all.
+- `Args` (the clap-derived CLI struct) lives in `main.rs`. The library defines a `CliOptions` trait that `main.rs::Args` implements; the library has no clap dependency in its public surface.
+
+**`config::*` accessor cleanup**: nine functions had `#[cfg(not(test))] return X; #[cfg(test)] return X;` — both branches identical. Collapsed.
+
+**Mechanical**:
+- `&[0x0a; 1]` → `b"\n"` in two places.
+- Duplicate `tempfile = "3.21"` removed from `[dev-dependencies]` (already in `[dependencies]`).
+
+**Net result**: cleaner module boundaries, a real perf fix on the tail path (no more double-parse), correctness fix for nginx-style numeric status codes, ~250 lines of dead code removed, docs and code finally describe the same project.
