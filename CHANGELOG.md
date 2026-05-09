@@ -3,6 +3,89 @@
 All notable changes to this project are	documented in this file.
 We use [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-09
+
+### 🔧 Misc
+
+- I've decided you can take my % n == 0 over my cold dead body.
+- Sync the mental model with the code
+
+A holistic review surfaced a cluster of issues that belong in one cleanup
+rather than dribbled across small fixes: docs that no longer described the
+actual project, dead-code threads from the 2026-02-21 simplification pass
+that were never fully pulled, a real perf bug on the multi-file tail path,
+and a quiet correctness bug for nginx-style numeric status codes.
+
+Real fixes:
+- Multi-file tail path no longer parses each line twice. BatchedLine now
+  parses into Printable once, extracts the timestamp through SourcedLine,
+  and pre-renders to bytes; handle_tailing just writes those bytes. Side
+  effect: multi-file tailing finally gets the ==> filename <== headers it
+  always should have had.
+- Message accepts numeric values for status, size, response_bytes,
+  request_size, request_duration, upstream_time, upstream_header_time, and
+  upstream_status. Previously these only deserialized JSON strings; nginx
+  and k8s emit them as numbers, and those lines silently fell through to
+  the GenericJson rendering path. Added a de_string_or_number visitor.
+
+Doc/code sync:
+- README dropped the bogus "adaptive chunking strategies that automatically
+  adjust" claim (those were deleted on 2026-02-21).
+- CLAUDE.md realigned: every module path, the actual Printable variant set,
+  the lib.rs / binary split, and the defaults.rs / json_profiler.rs /
+  logfmt.rs modules that were never previously documented.
+- README gained an install line, a happy-path example, and a mention of
+  logfmt.
+
+DRY consolidation in logpatterns/:
+- LayoutMetrics::current() centralizes terminal-width / padding /
+  show-time computation. Was duplicated 6 times.
+- write_cells_with_padding helper replaces 4 copies of the same loop.
+- pad_spaces helper replaces ~10 for _ in 0..N { extend(b" ") } loops.
+- rest_to_cells helper consolidates the #[serde(flatten)] walk.
+- Default fmt_pretty method on PrettyPrintable shrinks each Display::fmt
+  to one line.
+- colorize_json_value and colorize_map_entry now share scalar logic.
+
+Visibility tightening:
+- defaults, errors, memory_budget, logpatterns are pub(crate). The
+  re-exports for TaleError, MemoryBudget, MemoryPressure, StaticStrategy,
+  ChunkedFileReader, FileProcessor still publish the intended surface.
+- json_profiler is #[cfg(debug_assertions)] — release builds don't
+  include it at all.
+- Args (clap-derived) now lives in main.rs. The library defines a
+  CliOptions trait that main.rs::Args implements; the library has no
+  clap dependency in its public surface.
+
+Dead code removed:
+- Methods: MultiFileWatcher::stop, create_watcher_with_config,
+  FileStateManager::update_position, files_with_new_data,
+  StaticStrategy::conservative / with_config / from_config,
+  ChunkedFileReader::new_with_config / reset,
+  MemoryBudget::recommended_chunk_size and the only thing it called
+  (MemoryPressure::chunk_size_factor), and the IoErrorExt trait.
+- Fields: BatchedLine.parsed_json / _source_file / _line_number,
+  BatchConfig._max_buffer_memory, _path on ChunkedFileReader, _config on
+  MultiFileWatcher, WatcherConfig (entire type), _reader_id parameter on
+  try_allocate, _config parameter on the gone from_config.
+- Constants: INITIAL_CHUNK_SIZE, DEFAULT_MEMORY_PERCENTAGE, MAX_CHUNK_SIZE,
+  DEFAULT_BATCH_WINDOW_MS, DEFAULT_LINE_CAPACITY,
+  DEFAULT_OUTPUT_BUFFER_CAPACITY, should_chunk_by_default.
+- Misc: commented-out tokio::time::timeout import; three deleted
+  dead-code tests.
+
+Mechanical:
+- &[0x0a; 1] -> b"\n" in two places.
+- Duplicate tempfile = "3.21" removed from [dev-dependencies].
+- Nine config:: accessor pairs of cfg(not(test))/cfg(test) returning
+  identical expressions collapsed to one line each.
+- Pre-existing `as usize` self-cast in metrics::memory removed (clippy
+  flagged it once -D warnings was satisfied across the rest of the tree).
+
+Net -247 lines across 25 files. 88 tests pass; the missing three from the
+prior 90 are tests of the now-deleted methods. cargo fmt, clippy
+--all-targets -- -D warnings, and doc --no-deps are all clean.
+
 ## [0.3.0] - 2026-02-22
 
 ### 🚀 Features
