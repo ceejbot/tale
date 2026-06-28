@@ -1,7 +1,64 @@
 # Changelog
 
-All notable changes to this project are	documented in this file.
+All notable changes to this project are documented in this file.
 We use [semantic versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.3.2] - 2026-06-28
+
+### 🐛 Bug Fixes
+
+By new contributor @jjones287
+
+- Fix: tailing loop silently dropped lines on bursts of new data
+
+BufReader reads up to 8KB ahead on each fill. The old polling loop
+created a new BufReader per iteration, consumed one line, then dropped
+it. The OS file position had already advanced by up to 8KB, so
+stream_position() recorded that inflated offset and the next iteration
+seeked past all the buffered lines.
+
+Fix: keep the same BufReader alive for the lifetime of the tailing loop.
+When read_line returns 0 (EOF), sleep and retry — the reader picks up
+new data naturally as the file grows, with no manual seeking needed.
+
+The tale -f seek-to-end behaviour for offset=0 is preserved: attaching
+to a live file still starts at EOF and follows only new data.
+
+Add two unit tests for move_to_position and one integration test that
+spawns the binary, appends a burst of lines, and asserts every appended
+line appears in output.
+
+### 🔧 Misc
+
+- Chore: spruce up the crate and harden CI
+
+Housekeeping. Runtime behavior is unchanged -- the binary parses and
+prints exactly as before. The code, the docs, and the release pipeline
+are, one hopes, cleaner for the next time I pick up the project.
+
+Code
+
+- Droped the lifetime from `BackSeekingProcessor` and
+  `FileProcessorType`; they are always `'static` in practice.
+- The library only serves the cli, so it doesn't need public docs,
+  really.
+- Remove dead `eprintln!`s from `metrics/memory.rs`.
+
+Build, docs, and supply chain
+
+- Bumped deps in the lockfile.
+- The MSRV is `1.88.0`.
+- Added a `deny.toml`.
+- Verified that `cargo audit` is clean other than an unmaintained
+  build-dep-of-dep warning.
+
+CI hardening
+
+- Pinned actions to commit hashes.
+- Gave workflows and jobs the least privileges needed.
+- Satisfied the action linter.
+- Dropped the Mac Intel build.
+- INFRACTION. Formatting.
 
 ## [0.3.1] - 2026-05-09
 
@@ -17,6 +74,7 @@ that were never fully pulled, a real perf bug on the multi-file tail path,
 and a quiet correctness bug for nginx-style numeric status codes.
 
 Real fixes:
+
 - Multi-file tail path no longer parses each line twice. BatchedLine now
   parses into Printable once, extracts the timestamp through SourcedLine,
   and pre-renders to bytes; handle_tailing just writes those bytes. Side
@@ -29,6 +87,7 @@ Real fixes:
   the GenericJson rendering path. Added a de_string_or_number visitor.
 
 Doc/code sync:
+
 - README dropped the bogus "adaptive chunking strategies that automatically
   adjust" claim (those were deleted on 2026-02-21).
 - CLAUDE.md realigned: every module path, the actual Printable variant set,
@@ -38,16 +97,18 @@ Doc/code sync:
   logfmt.
 
 DRY consolidation in logpatterns/:
+
 - LayoutMetrics::current() centralizes terminal-width / padding /
   show-time computation. Was duplicated 6 times.
 - write_cells_with_padding helper replaces 4 copies of the same loop.
-- pad_spaces helper replaces ~10 for _ in 0..N { extend(b" ") } loops.
+- pad*spaces helper replaces ~10 for * in 0..N { extend(b" ") } loops.
 - rest_to_cells helper consolidates the #[serde(flatten)] walk.
 - Default fmt_pretty method on PrettyPrintable shrinks each Display::fmt
   to one line.
 - colorize_json_value and colorize_map_entry now share scalar logic.
 
 Visibility tightening:
+
 - defaults, errors, memory_budget, logpatterns are pub(crate). The
   re-exports for TaleError, MemoryBudget, MemoryPressure, StaticStrategy,
   ChunkedFileReader, FileProcessor still publish the intended surface.
@@ -58,16 +119,17 @@ Visibility tightening:
   clap dependency in its public surface.
 
 Dead code removed:
+
 - Methods: MultiFileWatcher::stop, create_watcher_with_config,
   FileStateManager::update_position, files_with_new_data,
   StaticStrategy::conservative / with_config / from_config,
   ChunkedFileReader::new_with_config / reset,
   MemoryBudget::recommended_chunk_size and the only thing it called
   (MemoryPressure::chunk_size_factor), and the IoErrorExt trait.
-- Fields: BatchedLine.parsed_json / _source_file / _line_number,
-  BatchConfig._max_buffer_memory, _path on ChunkedFileReader, _config on
-  MultiFileWatcher, WatcherConfig (entire type), _reader_id parameter on
-  try_allocate, _config parameter on the gone from_config.
+- Fields: BatchedLine.parsed_json / \_source_file / \_line_number,
+  BatchConfig.\_max_buffer_memory, \_path on ChunkedFileReader, \_config on
+  MultiFileWatcher, WatcherConfig (entire type), \_reader_id parameter on
+  try_allocate, \_config parameter on the gone from_config.
 - Constants: INITIAL_CHUNK_SIZE, DEFAULT_MEMORY_PERCENTAGE, MAX_CHUNK_SIZE,
   DEFAULT_BATCH_WINDOW_MS, DEFAULT_LINE_CAPACITY,
   DEFAULT_OUTPUT_BUFFER_CAPACITY, should_chunk_by_default.
@@ -75,6 +137,7 @@ Dead code removed:
   dead-code tests.
 
 Mechanical:
+
 - &[0x0a; 1] -> b"\n" in two places.
 - Duplicate tempfile = "3.21" removed from [dev-dependencies].
 - Nine config:: accessor pairs of cfg(not(test))/cfg(test) returning
@@ -93,10 +156,12 @@ prior 90 are tests of the now-deleted methods. cargo fmt, clippy
 - Feat: add --completions <shell> to generate completions
 
 The usual! Clap is so handy.
+
 - Feat: Finish implementing the conservative strategy
 
 and take care of an unfinished implementation task in
 BackSeekingProcessor.
+
 - Feat: elastic tabstop column alignment via tabwriter
 
 Replaced the sucky greedy left-to-right column packer with a
@@ -112,6 +177,7 @@ Nuked dead code.
 - Doc: Internal docs cleanup.
 
 jokes are all gone :(
+
 - Docs: Finally, update the readme.
 
 ### 🔧 Misc
@@ -119,17 +185,21 @@ jokes are all gone :(
 - Chore: finish the mock memory implementation
 
 For memory pressure testing improvements.
+
 - Chore: Address all the TODO items
 
 No big changes, but error message improvements mostly, and some
 notes about possible implementation improvements.
+
 - Chore: benchmarks and documentation
 
 The benchmarks are now in the manifest for use with `cargo bench`.
 Project documentation and the readme are now closer to up to date.
+
 - Chore: updated deps, cleaned up clippy
 
 Time marches ever onward, and things change.
+
 - Chore: rip out unused stuff; remove useless complexity
 
 - removed `is_memory_constrained()` dead function
@@ -141,6 +211,7 @@ Time marches ever onward, and things change.
 - updated the tests and benchmarks
 
 Most of the above turned out not to matter.
+
 - Chore: more dead code removal
 
 Trying to clean up unused options.
@@ -149,6 +220,7 @@ Trying to clean up unused options.
 with tail. This option is useless with this tool, however.
 `--bytes` is still useful because you might want to skip some
 garbage at the start of a file. Shrugmoji.
+
 - INFRACTION
 
 ## [0.2.1] - 2025-08-25
@@ -167,6 +239,7 @@ garbage at the start of a file. Shrugmoji.
 ## [0.2.0] - 2025-08-17
 
 ### Added
+
 - **Multi-file tailing support**: Watch and display multiple files simultaneously
 - **Timestamp-based line batching**: Chronological ordering of multi-file output
 - **Configurable batch windows**: Control timing for multi-file coordination (default: 250ms)
@@ -182,6 +255,7 @@ garbage at the start of a file. Shrugmoji.
 - **Complete stdin offset support**: All `tail`-compatible offset modes (`-n`, `-c`, `-b`)
 
 ### Changed
+
 - **Major architecture refactor**: Separated readers subsystem with processor selection
 - **Zero-copy JSON parsing**: `Cow<'a, str>` fields reduce allocations by ~1.8M/sec
 - **Custom column layout engine**: Replaced `term_grid` with direct buffer writing
@@ -192,6 +266,7 @@ garbage at the start of a file. Shrugmoji.
 - **Enhanced test coverage**: 97 unit tests with comprehensive edge case handling
 
 ### Performance Improvements
+
 - **28-37% overall speedup**: 616ms → 443ms on 23MB files
 - **Canonical log type**: 25-34% improvement for well-structured HTTP logs
 - **Memory efficiency**: 1.8% memory footprint (4.2MB for 235MB files)
@@ -199,6 +274,7 @@ garbage at the start of a file. Shrugmoji.
 - **CPU-optimized**: 74% CPU, 26% I/O - JSON parsing is the bottleneck
 
 ### Fixed
+
 - **Chunked skip_lines**: Proper partial chunk consumption and state management
 - **Boundary handling**: Correct line parsing across chunk boundaries
 - **Negative offset support**: Memory-bounded circular buffers for bytes/blocks
@@ -208,6 +284,7 @@ garbage at the start of a file. Shrugmoji.
 ## [0.1.0] - 2025-07-30
 
 ### Added
+
 - Basic NDJSON log pretty-printing
 - Single file processing
 - Basic tail-compatible offset support

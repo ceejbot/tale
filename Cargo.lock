@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "tale-ndjson"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ansi-width",
  "bytes",
