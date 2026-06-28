@@ -172,10 +172,11 @@ pub fn colorize_json_value(value: &serde_json::Value) -> String {
     }
 }
 
-/// Render a key=value pair using the same color scheme as `colorize_json_value`.
-/// Arrays are rendered without the `key=` prefix (just the comma-joined values),
-/// matching the original semantics — arrays are typically lists of structured
-/// data where the key context is already provided by surrounding columns.
+/// Render a key=value pair using the same color scheme as
+/// `colorize_json_value`. Arrays are rendered without the `key=` prefix (just
+/// the comma-joined values), matching the original semantics — arrays are
+/// typically lists of structured data where the key context is already provided
+/// by surrounding columns.
 pub fn colorize_map_entry(key: &str, value: &serde_json::Value) -> String {
     if let Value::Array(values) = value {
         return values.iter().map(colorize_json_value).collect::<Vec<_>>().join(", ");

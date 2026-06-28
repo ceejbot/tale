@@ -35,14 +35,13 @@ mod tests;
 
 // The error type and the core reader trait are the reusable surface.
 pub use errors::TaleError;
-pub use readers::FileProcessor;
-
 // Re-exported only so `benches/` (a separate crate target) can reach them.
 // Still `pub` so the benchmarks compile; hidden from the published docs.
 #[doc(hidden)]
 pub use memory_budget::{MemoryBudget, MemoryPressure};
 #[doc(hidden)]
 pub use readers::ChunkedFileReader;
+pub use readers::FileProcessor;
 #[doc(hidden)]
 pub use readers::strategies::StaticStrategy;
 
