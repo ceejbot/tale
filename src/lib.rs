@@ -3,6 +3,15 @@
 //! This library provides utilities for reading, parsing, and formatting
 //! newline-delimited JSON log files with memory-efficient processing
 //! and chunked file processing.
+//!
+//! ## Library surface
+//!
+//! This crate is, first and foremost, the `tale` binary. The `pub` items here
+//! exist to serve that binary and the `benches/` — both separate crate targets,
+//! so they can only reach `pub` items. They are **not** a stability-guaranteed
+//! public API. Items re-exported solely for the benchmarks are marked
+//! `#[doc(hidden)]`; `TaleError` and the [`FileProcessor`] trait are the only
+//! pieces shaped as a reusable surface.
 
 use std::io::{self, Write};
 
@@ -24,11 +33,18 @@ pub mod readers;
 #[cfg(test)]
 mod tests;
 
-// Re-export commonly used types for convenience
+// The error type and the core reader trait are the reusable surface.
 pub use errors::TaleError;
+pub use readers::FileProcessor;
+
+// Re-exported only so `benches/` (a separate crate target) can reach them.
+// Still `pub` so the benchmarks compile; hidden from the published docs.
+#[doc(hidden)]
 pub use memory_budget::{MemoryBudget, MemoryPressure};
+#[doc(hidden)]
+pub use readers::ChunkedFileReader;
+#[doc(hidden)]
 pub use readers::strategies::StaticStrategy;
-pub use readers::{ChunkedFileReader, FileProcessor};
 
 /// Process a single line of input (JSON or plain text) and write to output.
 #[inline]

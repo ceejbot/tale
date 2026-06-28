@@ -15,16 +15,18 @@ use crate::defaults::io::*;
 use crate::errors::TaleError;
 use crate::{config, process_line, strip_line_ending};
 
-pub struct BackSeekingProcessor<'a> {
+pub struct BackSeekingProcessor {
     fpath: PathBuf,
     initial_file_size: u64,
     file: Option<File>,
-    outlock: io::StdoutLock<'a>,
+    // `io::stdout().lock()` yields a `'static` guard — stdout is a process global —
+    // so this processor never needs a lifetime parameter.
+    outlock: io::StdoutLock<'static>,
     buffer: BytesMut,
     count: u16,
 }
 
-impl<'a> FileProcessor for BackSeekingProcessor<'a> {
+impl FileProcessor for BackSeekingProcessor {
     fn process_lines<F>(&mut self, mut line_processor: F) -> Result<(), TaleError>
     where
         F: FnMut(&str) -> Result<(), TaleError>,
@@ -72,7 +74,7 @@ impl<'a> FileProcessor for BackSeekingProcessor<'a> {
     }
 }
 
-impl<'a> BackSeekingProcessor<'a> {
+impl BackSeekingProcessor {
     pub fn new(fpath: PathBuf) -> Self {
         // briefly open the file and figure out its size
         let file_size = if let Ok(mut file) = File::open(&fpath) {

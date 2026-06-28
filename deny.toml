@@ -1,0 +1,39 @@
+# Supply-chain policy for `cargo deny check` (advisories + bans + licenses + sources).
+# Run before publishing: `cargo deny check`. Pairs with `cargo audit`.
+
+[advisories]
+version = 2
+# RUSTSEC-2026-0173: proc-macro-error2 is unmaintained. It is a compile-time-only
+# proc-macro dependency (pulled transitively), so it never ships in the `tale`
+# binary. Left visible (not ignored) so a real replacement is on the radar.
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Permissive licenses present across the dependency tree, plus this crate's own
+# source-available Parity license. "Parity-7.0.0" is not a registered SPDX id, so
+# it is matched here by exact string for tale-ndjson itself.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "BSL-1.0",
+    "CC0-1.0",
+    "0BSD",
+    "Parity-7.0.0",
+]
+
+[bans]
+# No banned crates yet; surface accidental duplicate versions as warnings.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

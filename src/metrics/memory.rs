@@ -92,8 +92,6 @@ pub mod memimpl {
         let max_allowed =
             max_allowed_bytes.unwrap_or_else(|| crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES));
         let free = system.free_memory() as usize;
-        // let total = system.total_memory();
-        // eprintln!("memory: rss={rss}; max_allowed={max_allowed}; free={free};");
 
         if rss > max_allowed || rss > free {
             MemoryPressure::Critical
@@ -117,16 +115,12 @@ pub mod memimpl {
         let mut system = system();
         system.refresh_processes(to_update, true);
         let free = system.free_memory() as usize;
-        // let total = system.total_memory() as usize;
 
         let Some(process) = system.process(pid) else {
             return free;
         };
         let rss = process.memory() as usize;
         let max_allowed = crate::config::config().max_memory.unwrap_or(MEMORY_LIMIT_BYTES);
-
-        // eprintln!("system: total={total} free={free}; process: rss={rss}; max:
-        // {max_allowed}");
 
         let remaining_budget = max_allowed.saturating_sub(rss);
         std::cmp::min(free, remaining_budget)

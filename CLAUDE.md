@@ -194,22 +194,25 @@ most-specific to least-specific via `#[serde(untagged)]`:
 
 ### Key Dependencies
 - `clap` - Command-line argument parsing with derive macros and custom styling
+- `clap_complete` - Shell completion generation for the CLI
+- `serde` - Derive macros for the `Printable` log-pattern types
 - `serde_json` - JSON parsing with flexible field aliases and `Cow<'a, str>` support
 - `jiff` - Timestamp handling and formatting
 - `owo-colors` - Terminal colors and styling
 - `textwrap` - Terminal width detection
 - `ansi-width` - ANSI escape sequence aware width calculation for colored text
+- `tabwriter` - Elastic-tabstop column alignment
 - `bytes` - Efficient byte buffer handling with `BytesMut`
 - `humansize` - Binary size formatting (KB, MB, GB)
+- `memory-stats` - Process RSS sampling for the memory budget
+- `sysinfo` - System memory pressure detection
 - `tokio` - Async runtime for multi-file coordination and event handling
 - `notify` - Cross-platform file system event watching
-- `async-watcher` - Async wrapper for notify integration
-- `futures` - Stream utilities for async coordination
 - `glob` - Glob pattern matching for file expansion
 - `thiserror` - Ergonomic error type definitions
 - `miette` - Rich error diagnostics with source location tracking
-- `criterion` - Statistical benchmarking framework for performance testing
-- `ripline` - Available for future I/O optimizations (not currently used)
+- `tempfile` - Temp-file fallback for stdin `backtrack_lines` past the memory budget (also used in tests)
+- `criterion` - Statistical benchmarking framework for performance testing (dev-dependency)
 
 ### Output Format
 The tool produces optimized columnar output with:

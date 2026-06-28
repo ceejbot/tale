@@ -232,7 +232,7 @@ fn enhance_error_context(error: TaleError, path: &Path) -> TaleError {
 pub fn create_file_processor<P: AsRef<Path>>(
     path: P,
     file_size_hint: Option<u64>,
-) -> Result<FileProcessorType<'static>, TaleError> {
+) -> Result<FileProcessorType, TaleError> {
     let path = path.as_ref();
 
     // Get file size if not provided
@@ -285,13 +285,13 @@ pub trait FileProcessor {
 }
 
 /// Chonked vs buffered vs can-go-backwards variants.
-pub enum FileProcessorType<'a> {
+pub enum FileProcessorType {
     Buffered(BufferedFileProcessor),
     Chunked(Box<ChunkedFileReader>),
-    BackSeeking(BackSeekingProcessor<'a>),
+    BackSeeking(BackSeekingProcessor),
 }
 
-impl<'a> FileProcessor for FileProcessorType<'a> {
+impl FileProcessor for FileProcessorType {
     fn process_lines<F>(&mut self, line_processor: F) -> Result<(), TaleError>
     where
         F: FnMut(&str) -> Result<(), TaleError>,

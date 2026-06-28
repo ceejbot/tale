@@ -2,13 +2,18 @@
 //! and then doesn't vary it but chugs right on through. This is fine for
 //! single-file reading.
 
+/// A chunk size chosen once from the file size, then held constant for the
+/// whole read. See the module docs for why a single fixed size is enough.
 #[derive(Debug, Clone)]
 pub struct StaticStrategy {
+    /// The chunk size, in bytes, used for every read.
     pub chunk_size: usize,
+    /// Line-boundary overlap and memory-mode settings.
     pub config: ChunkConfig,
 }
 
 impl StaticStrategy {
+    /// Pick a block-aligned chunk size appropriate for a file of this size.
     pub fn optimal_for_file(file_size: u64) -> Self {
         Self {
             chunk_size: optimal_chunk_size(file_size),

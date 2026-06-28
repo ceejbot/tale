@@ -8,6 +8,7 @@ authors = ["C J Silverio <ceejceej@gmail.com>"]
 edition = "2024"
 readme = "README.md"
 license = "Parity-7.0.0"
+rust-version = "1.88.0"
 repository = "https://github.com/ceejbot/tale"
 homepage = "https://github.com/ceejbot/tale"
 
